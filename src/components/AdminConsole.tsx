@@ -7,32 +7,10 @@ import {
   signedUrl,
   upload,
 } from "../lib/supabase";
-import type { Instance, ModuleKey, Session, Submission } from "../types";
+import type { Instance, ModuleDefinition, Session, Submission } from "../types";
+import { definitions } from "../lib/modules";
 import GeoMap from "./GeoMap";
-
-const moduleOptions: { key: ModuleKey; title: string; description: string }[] =
-  [
-    {
-      key: "places",
-      title: "Places",
-      description: "Destinations, attractions, facilities, trails, departments",
-    },
-    {
-      key: "assets",
-      title: "Assets",
-      description: "Vehicles, machinery, tools, rental and durable equipment",
-    },
-    {
-      key: "stock",
-      title: "Stock",
-      description: "Sellable or consumable quantities with units",
-    },
-    {
-      key: "loose_material",
-      title: "Loose material",
-      description: "Scrap, offcuts, salvage, temporary piles and finds",
-    },
-  ];
+import ModuleBuilder from "./ModuleBuilder";
 
 export default function AdminConsole({
   navigate,
@@ -57,6 +35,19 @@ export default function AdminConsole({
   const [submissions, setSubmissions] = useState<Submission[]>([]);
   const [message, setMessage] = useState("");
   const [tab, setTab] = useState<"instances" | "review">("instances");
+  const [instanceView, setInstanceView] = useState<"configure" | "create">(
+    "configure",
+  );
+  const [createModules, setCreateModules] = useState<ModuleDefinition[]>([
+    {
+      id: "items",
+      name: "Items",
+      public_visible: true,
+      public_submit: true,
+      fields: [],
+    },
+  ]);
+  const [editModules, setEditModules] = useState<ModuleDefinition[]>([]);
 
   async function findPlace() {
     if (!placeSearch.trim()) return;
@@ -124,6 +115,7 @@ export default function AdminConsole({
         });
         setEditZoom(current.map_zoom);
         setEditBoundary(current.boundary || []);
+        setEditModules(definitions(current));
       }
     } catch (e) {
       setMessage(e instanceof Error ? e.message : "Could not load instances.");
@@ -157,6 +149,7 @@ export default function AdminConsole({
     });
     setEditZoom(selected.map_zoom);
     setEditBoundary(selected.boundary || []);
+    setEditModules(definitions(selected));
     setEditDrawing(false);
   }, [selected?.id]);
   async function login(event: FormEvent<HTMLFormElement>) {
@@ -183,9 +176,8 @@ export default function AdminConsole({
       .toLowerCase()
       .replace(/[^a-z0-9-]/g, "-")
       .replace(/-+/g, "-");
-    const modules = moduleOptions
-      .filter(({ key }) => form.get(key) === "on")
-      .map(({ key }) => key);
+    const configured = createModules.filter((module) => module.name.trim());
+    const modules = configured.map((module) => module.id);
     if (!modules.length)
       return setMessage("Enable at least one feature module.");
     const id = crypto.randomUUID();
@@ -200,11 +192,9 @@ export default function AdminConsole({
           site_name: String(form.get("siteName") || "Main Site"),
           access_mode: form.get("accessMode"),
           modules,
+          module_definitions: configured,
           terminology: Object.fromEntries(
-            moduleOptions.map(({ key, title }) => [
-              key,
-              String(form.get(`term-${key}`) || title),
-            ]),
+            configured.map((module) => [module.id, module.name]),
           ),
           latitude: Number(form.get("latitude")),
           longitude: Number(form.get("longitude")),
@@ -232,9 +222,8 @@ export default function AdminConsole({
     event.preventDefault();
     if (!selected) return;
     const form = new FormData(event.currentTarget);
-    const modules = moduleOptions
-      .filter(({ key }) => form.get(`edit-${key}`) === "on")
-      .map(({ key }) => key);
+    const configured = editModules.filter((module) => module.name.trim());
+    const modules = configured.map((module) => module.id);
     if (!modules.length)
       return setMessage("Enable at least one feature module.");
     try {
@@ -245,11 +234,9 @@ export default function AdminConsole({
           site_name: String(form.get("edit-siteName") || selected.site_name),
           access_mode: form.get("edit-accessMode"),
           modules,
+          module_definitions: configured,
           terminology: Object.fromEntries(
-            moduleOptions.map(({ key, title }) => [
-              key,
-              String(form.get(`edit-term-${key}`) || title),
-            ]),
+            configured.map((module) => [module.id, module.name]),
           ),
           latitude: editCenter.latitude,
           longitude: editCenter.longitude,
@@ -292,6 +279,16 @@ export default function AdminConsole({
     );
     try {
       if (decision === "approved" && item.submission_type === "new_record") {
+        const moduleDefinition = definitions(selected).find(
+          (module) => module.id === item.record_type,
+        );
+        const publicData = Object.fromEntries(
+          Object.entries(item.data || {}).filter(
+            ([key]) =>
+              moduleDefinition?.fields.find((field) => field.key === key)
+                ?.public_visible,
+          ),
+        );
         const privateUrl = await signedUrl("submission-media", item.photo_path);
         const photo = await fetch(privateUrl).then((response) =>
           response.blob(),
@@ -313,8 +310,10 @@ export default function AdminConsole({
             longitude: item.longitude,
             photo_path: publicPath,
             public_visible: true,
+            data: publicData,
             source_submission_id: item.id,
             updated_by: session.user.id,
+            updated_by_email: session.user.email,
           },
         });
       }
@@ -427,6 +426,7 @@ export default function AdminConsole({
                 });
                 setEditZoom(instance.map_zoom);
                 setEditBoundary(instance.boundary || []);
+                setEditModules(definitions(instance));
                 setEditDrawing(false);
               }}
               key={instance.id}
@@ -460,7 +460,21 @@ export default function AdminConsole({
                   </button>
                 )}
               </div>
-              {selected && (
+              <div className="instance-view-tabs">
+                <button
+                  className={instanceView === "configure" ? "active" : ""}
+                  onClick={() => setInstanceView("configure")}
+                >
+                  Configure selected
+                </button>
+                <button
+                  className={instanceView === "create" ? "active" : ""}
+                  onClick={() => setInstanceView("create")}
+                >
+                  + New organization
+                </button>
+              </div>
+              {instanceView === "configure" && selected && (
                 <section className="selected-instance">
                   <div>
                     <small>SELECTED INSTANCE</small>
@@ -484,7 +498,7 @@ export default function AdminConsole({
                   </button>
                 </section>
               )}
-              {selected && (
+              {instanceView === "configure" && selected && (
                 <section className="deploy-panel edit-instance-panel">
                   <h2>Edit selected instance</h2>
                   <p className="section-help">
@@ -513,30 +527,10 @@ export default function AdminConsole({
                       </label>
                     </div>
                     <h3>Enabled categories and labels</h3>
-                    <div className="module-options">
-                      {moduleOptions.map((option) => (
-                        <label key={option.key}>
-                          <input
-                            type="checkbox"
-                            name={`edit-${option.key}`}
-                            defaultChecked={selected.modules.includes(
-                              option.key,
-                            )}
-                          />
-                          <span>
-                            <b>{option.title}</b>
-                            <small>{option.description}</small>
-                          </span>
-                          <input
-                            name={`edit-term-${option.key}`}
-                            defaultValue={
-                              selected.terminology[option.key] || option.title
-                            }
-                            aria-label={`${option.title} label`}
-                          />
-                        </label>
-                      ))}
-                    </div>
+                    <ModuleBuilder
+                      value={editModules}
+                      onChange={setEditModules}
+                    />
                     <h3>Map and site boundary</h3>
                     <p className="section-help">
                       Move the center pin normally. Select Draw boundary, then
@@ -648,184 +642,171 @@ export default function AdminConsole({
                   </form>
                 </section>
               )}
-              <section className="deploy-panel">
-                <h2>Create a new instance</h2>
-                <div className="deployment-note">
-                  <b>Shared public/free deployment</b>
-                  <p>
-                    This console creates an isolated instance in the shared
-                    Lotkeeper database. “Private” means authenticated access in
-                    that shared service. Customers requiring their own database
-                    use the dedicated deployment workflow maintained with this
-                    project.
-                  </p>
-                </div>
-                <form onSubmit={createInstance}>
-                  <div className="form-columns">
-                    <label>
-                      Organization name
-                      <input
-                        name="name"
-                        required
-                        placeholder="Example: Page Steel"
-                      />
-                    </label>
-                    <label>
-                      URL slug
-                      <input
-                        name="slug"
-                        required
-                        pattern="[a-z0-9-]+"
-                        placeholder="page-steel"
-                      />
-                    </label>
-                    <label>
-                      Site name
-                      <input
-                        name="siteName"
-                        required
-                        defaultValue="Main Site"
-                      />
-                    </label>
-                    <label>
-                      Access
-                      <select name="accessMode">
-                        <option value="public">Public directory</option>
-                        <option value="private">
-                          Private access, shared database
-                        </option>
-                      </select>
-                    </label>
+              {instanceView === "create" && (
+                <section className="deploy-panel">
+                  <h2>Create a new instance</h2>
+                  <div className="deployment-note">
+                    <b>Shared public/free deployment</b>
+                    <p>
+                      This console creates an isolated instance in the shared
+                      Lotkeeper database. “Private” means authenticated access
+                      in that shared service. Customers requiring their own
+                      database use the dedicated deployment workflow maintained
+                      with this project.
+                    </p>
                   </div>
-                  <h3>Feature modules</h3>
-                  <div className="module-options">
-                    {moduleOptions.map((option) => (
-                      <label key={option.key}>
+                  <form onSubmit={createInstance}>
+                    <div className="form-columns">
+                      <label>
+                        Organization name
                         <input
-                          type="checkbox"
-                          name={option.key}
-                          defaultChecked={option.key !== "stock"}
-                        />
-                        <span>
-                          <b>{option.title}</b>
-                          <small>{option.description}</small>
-                        </span>
-                        <input
-                          name={`term-${option.key}`}
-                          defaultValue={option.title}
-                          aria-label={`${option.title} label`}
+                          name="name"
+                          required
+                          placeholder="Example: Page Steel"
                         />
                       </label>
-                    ))}
-                  </div>
-                  <h3>Initial map</h3>
-                  <p className="section-help">
-                    Search for a city, use your current location, then click the
-                    map or drag the yellow pin to select the deployment center.
-                    Optionally draw the site boundary before creating it.
-                  </p>
-                  <div className="map-search">
-                    <input
-                      value={placeSearch}
-                      onChange={(event) => setPlaceSearch(event.target.value)}
-                      placeholder="City, state or country"
-                      aria-label="Search for a map location"
+                      <label>
+                        URL slug
+                        <input
+                          name="slug"
+                          required
+                          pattern="[a-z0-9-]+"
+                          placeholder="page-steel"
+                        />
+                      </label>
+                      <label>
+                        Site name
+                        <input
+                          name="siteName"
+                          required
+                          defaultValue="Main Site"
+                        />
+                      </label>
+                      <label>
+                        Access
+                        <select name="accessMode">
+                          <option value="public">Public directory</option>
+                          <option value="private">
+                            Private access, shared database
+                          </option>
+                        </select>
+                      </label>
+                    </div>
+                    <h3>Feature modules</h3>
+                    <ModuleBuilder
+                      value={createModules}
+                      onChange={setCreateModules}
                     />
-                    <button type="button" onClick={findPlace}>
-                      Find place
-                    </button>
-                    <button type="button" onClick={useCurrentLocation}>
-                      Use my location
-                    </button>
-                  </div>
-                  <div className="boundary-actions">
-                    <button
-                      type="button"
-                      className={drawingBoundary ? "active" : ""}
-                      onClick={() => setDrawingBoundary((value) => !value)}
-                    >
-                      {drawingBoundary ? "Stop drawing" : "Draw boundary"}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setBoundaryPoints((points) => points.slice(0, -1))
+                    <h3>Initial map</h3>
+                    <p className="section-help">
+                      Search for a city, use your current location, then click
+                      the map or drag the yellow pin to select the deployment
+                      center. Optionally draw the site boundary before creating
+                      it.
+                    </p>
+                    <div className="map-search">
+                      <input
+                        value={placeSearch}
+                        onChange={(event) => setPlaceSearch(event.target.value)}
+                        placeholder="City, state or country"
+                        aria-label="Search for a map location"
+                      />
+                      <button type="button" onClick={findPlace}>
+                        Find place
+                      </button>
+                      <button type="button" onClick={useCurrentLocation}>
+                        Use my location
+                      </button>
+                    </div>
+                    <div className="boundary-actions">
+                      <button
+                        type="button"
+                        className={drawingBoundary ? "active" : ""}
+                        onClick={() => setDrawingBoundary((value) => !value)}
+                      >
+                        {drawingBoundary ? "Stop drawing" : "Draw boundary"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setBoundaryPoints((points) => points.slice(0, -1))
+                        }
+                        disabled={!boundaryPoints.length}
+                      >
+                        Undo point
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setBoundaryPoints([])}
+                        disabled={!boundaryPoints.length}
+                      >
+                        Clear boundary
+                      </button>
+                      <span>{boundaryPoints.length} boundary points</span>
+                    </div>
+                    <GeoMap
+                      latitude={mapCenter.latitude}
+                      longitude={mapCenter.longitude}
+                      zoom={mapZoom}
+                      picker
+                      boundary={boundaryPoints}
+                      boundaryPicker={drawingBoundary}
+                      onBoundaryChange={setBoundaryPoints}
+                      onPick={(latitude, longitude) =>
+                        setMapCenter({ latitude, longitude })
                       }
-                      disabled={!boundaryPoints.length}
-                    >
-                      Undo point
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setBoundaryPoints([])}
-                      disabled={!boundaryPoints.length}
-                    >
-                      Clear boundary
-                    </button>
-                    <span>{boundaryPoints.length} boundary points</span>
-                  </div>
-                  <GeoMap
-                    latitude={mapCenter.latitude}
-                    longitude={mapCenter.longitude}
-                    zoom={mapZoom}
-                    picker
-                    boundary={boundaryPoints}
-                    boundaryPicker={drawingBoundary}
-                    onBoundaryChange={setBoundaryPoints}
-                    onPick={(latitude, longitude) =>
-                      setMapCenter({ latitude, longitude })
-                    }
-                  />
-                  <div className="form-columns map-config">
-                    <label>
-                      Latitude
-                      <input
-                        name="latitude"
-                        type="number"
-                        step="any"
-                        required
-                        value={mapCenter.latitude}
-                        onChange={(event) =>
-                          setMapCenter((current) => ({
-                            ...current,
-                            latitude: Number(event.target.value),
-                          }))
-                        }
-                      />
-                    </label>
-                    <label>
-                      Longitude
-                      <input
-                        name="longitude"
-                        type="number"
-                        step="any"
-                        required
-                        value={mapCenter.longitude}
-                        onChange={(event) =>
-                          setMapCenter((current) => ({
-                            ...current,
-                            longitude: Number(event.target.value),
-                          }))
-                        }
-                      />
-                    </label>
-                    <label>
-                      Zoom
-                      <input
-                        name="zoom"
-                        type="number"
-                        min="3"
-                        max="22"
-                        value={mapZoom}
-                        onChange={(event) =>
-                          setMapZoom(Number(event.target.value))
-                        }
-                      />
-                    </label>
-                  </div>
-                  <button className="deploy-button">Create instance</button>
-                </form>
-              </section>
+                    />
+                    <div className="form-columns map-config">
+                      <label>
+                        Latitude
+                        <input
+                          name="latitude"
+                          type="number"
+                          step="any"
+                          required
+                          value={mapCenter.latitude}
+                          onChange={(event) =>
+                            setMapCenter((current) => ({
+                              ...current,
+                              latitude: Number(event.target.value),
+                            }))
+                          }
+                        />
+                      </label>
+                      <label>
+                        Longitude
+                        <input
+                          name="longitude"
+                          type="number"
+                          step="any"
+                          required
+                          value={mapCenter.longitude}
+                          onChange={(event) =>
+                            setMapCenter((current) => ({
+                              ...current,
+                              longitude: Number(event.target.value),
+                            }))
+                          }
+                        />
+                      </label>
+                      <label>
+                        Zoom
+                        <input
+                          name="zoom"
+                          type="number"
+                          min="3"
+                          max="22"
+                          value={mapZoom}
+                          onChange={(event) =>
+                            setMapZoom(Number(event.target.value))
+                          }
+                        />
+                      </label>
+                    </div>
+                    <button className="deploy-button">Create instance</button>
+                  </form>
+                </section>
+              )}
             </>
           ) : (
             <>

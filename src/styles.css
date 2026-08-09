@@ -896,6 +896,129 @@ button {
   line-height: 1.5;
   margin: 5px 0 0;
 }
+.instance-view-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin: 18px 0;
+}
+.instance-view-tabs button {
+  border: 1px solid var(--navy);
+  background: #fff;
+  color: var(--navy);
+  padding: 13px;
+  font-weight: 800;
+}
+.instance-view-tabs button.active {
+  background: var(--navy);
+  color: #fff;
+  box-shadow: inset 0 -5px var(--yellow);
+}
+.module-builder {
+  display: grid;
+  gap: 12px;
+}
+.module-card {
+  border: 1px solid var(--line);
+  padding: 14px;
+  background: var(--soft);
+}
+.module-card-head {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: end;
+  gap: 10px;
+}
+.module-card-head label {
+  margin: 0;
+}
+.module-card-head button {
+  border: 0;
+  color: #8c2f24;
+  background: #f0dedb;
+  padding: 10px;
+}
+.visibility-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin: 10px 0;
+}
+.visibility-row label {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  margin: 0;
+}
+.field-catalog {
+  display: grid;
+  gap: 5px;
+}
+.field-catalog > div {
+  display: grid;
+  grid-template-columns: minmax(145px, 1fr) repeat(3, auto);
+  gap: 10px;
+  align-items: center;
+  background: #fff;
+  border: 1px solid var(--line);
+  padding: 9px;
+}
+.field-catalog label {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  margin: 0;
+  font-size: 9px;
+}
+.add-module {
+  border: 2px dashed var(--navy);
+  background: #fff;
+  color: var(--navy);
+  padding: 13px;
+  font-weight: 800;
+}
+.custom-field {
+  display: grid;
+  grid-template-columns: minmax(130px, 1fr) 100px repeat(3, auto) auto;
+  gap: 8px;
+  align-items: center;
+  padding: 9px;
+  margin-top: 7px;
+  background: #fff;
+  border: 1px solid var(--line);
+}
+.custom-field label {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  margin: 0;
+  font-size: 9px;
+}
+.custom-field button {
+  border: 0;
+  background: #f0dedb;
+  color: #8c2f24;
+  padding: 8px;
+}
+.add-field {
+  margin-top: 9px;
+  border: 1px solid var(--navy);
+  background: #fff;
+  color: var(--navy);
+  padding: 9px;
+  font-weight: 700;
+}
+@media (max-width: 600px) {
+  .field-catalog > div {
+    grid-template-columns: 1fr 1fr;
+  }
+  .module-card-head {
+    grid-template-columns: 1fr;
+  }
+  .custom-field {
+    grid-template-columns: 1fr 1fr;
+  }
+}
 .boundary-actions {
   display: flex;
   align-items: center;

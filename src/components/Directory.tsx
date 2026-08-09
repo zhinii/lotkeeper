@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { db, publicPhoto } from "../lib/supabase";
 import type { Instance, RecordItem } from "../types";
+import { definitions, moduleName } from "../lib/modules";
 import GeoMap from "./GeoMap";
 
 const labels: Record<string, string> = {
@@ -17,6 +18,9 @@ export default function Directory({
   instance: Instance;
   navigate: (route: string) => void;
 }) {
+  const publicModules = definitions(instance).filter(
+    (item) => item.public_visible,
+  );
   const [records, setRecords] = useState<RecordItem[]>([]);
   const [query, setQuery] = useState("");
   const [module, setModule] = useState("all");
@@ -88,14 +92,16 @@ export default function Directory({
             <span>All records</span>
             <b>{records.length}</b>
           </button>
-          {instance.modules.map((key) => (
+          {publicModules.map((definition) => (
             <button
-              className={module === key ? "active" : ""}
-              onClick={() => setModule(key)}
-              key={key}
+              className={module === definition.id ? "active" : ""}
+              onClick={() => setModule(definition.id)}
+              key={definition.id}
             >
-              <span>{instance.terminology[key] || labels[key]}</span>
-              <b>{records.filter((r) => r.record_type === key).length}</b>
+              <span>{definition.name}</span>
+              <b>
+                {records.filter((r) => r.record_type === definition.id).length}
+              </b>
             </button>
           ))}
           <div className="rail-help">
@@ -138,10 +144,7 @@ export default function Directory({
                 onClick={() => setSelectedId(item.id)}
               >
                 <span className="type-code">
-                  {(
-                    instance.terminology[item.record_type] ||
-                    labels[item.record_type]
-                  )
+                  {moduleName(instance, item.record_type)
                     .slice(0, 2)
                     .toUpperCase()}
                 </span>
@@ -206,6 +209,29 @@ export default function Directory({
                     </dd>
                   </div>
                 )}
+                {definitions(instance)
+                  .find((item) => item.id === selected.record_type)
+                  ?.fields.filter(
+                    (field) =>
+                      field.public_visible &&
+                      selected.data?.[field.key] !== undefined,
+                  )
+                  .map((field) => (
+                    <div key={field.key}>
+                      <dt>{field.label}</dt>
+                      <dd>{String(selected.data[field.key])}</dd>
+                    </div>
+                  ))}
+                {selected.updated_by_email &&
+                  definitions(instance)
+                    .find((item) => item.id === selected.record_type)
+                    ?.fields.find((field) => field.key === "updated_by")
+                    ?.public_visible && (
+                    <div>
+                      <dt>Updated by</dt>
+                      <dd>{selected.updated_by_email}</dd>
+                    </div>
+                  )}
               </dl>
               <a
                 target="_blank"

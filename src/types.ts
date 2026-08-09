@@ -1,4 +1,20 @@
-export type ModuleKey = "places" | "assets" | "stock" | "loose_material";
+export type ModuleKey = string;
+export type FieldType = "text" | "number" | "date" | "boolean";
+export type ModuleField = {
+  key: string;
+  label: string;
+  type: FieldType;
+  public_visible: boolean;
+  public_submit: boolean;
+  required: boolean;
+};
+export type ModuleDefinition = {
+  id: string;
+  name: string;
+  public_visible: boolean;
+  public_submit: boolean;
+  fields: ModuleField[];
+};
 
 export type Instance = {
   id: string;
@@ -8,6 +24,7 @@ export type Instance = {
   access_mode: "public" | "private";
   modules: ModuleKey[];
   terminology: Record<string, string>;
+  module_definitions: ModuleDefinition[];
   latitude: number;
   longitude: number;
   map_zoom: number;
@@ -32,6 +49,8 @@ export type RecordItem = {
   longitude: number;
   photo_path: string | null;
   public_visible: boolean;
+  data: Record<string, unknown>;
+  updated_by_email: string | null;
   updated_at: string;
 };
 
@@ -48,9 +67,10 @@ export type Submission = {
   latitude: number;
   longitude: number;
   gps_accuracy: number | null;
-  contact_name: string;
-  contact_method: string;
-  contact_value: string;
+  contact_name: string | null;
+  contact_method: string | null;
+  contact_value: string | null;
+  data: Record<string, unknown>;
   photo_path: string;
   status: "pending" | "approved" | "rejected";
   submitted_at: string;

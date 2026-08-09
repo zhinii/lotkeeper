@@ -11,6 +11,7 @@ create table if not exists public.instances (
   access_mode text not null default 'public' check (access_mode in ('public','private')),
   modules jsonb not null default '["places"]'::jsonb,
   terminology jsonb not null default '{}'::jsonb,
+  module_definitions jsonb not null default '[]'::jsonb,
   latitude double precision not null,
   longitude double precision not null,
   map_zoom integer not null default 17 check (map_zoom between 3 and 22),
@@ -34,7 +35,7 @@ create table if not exists public.instance_members (
 create table if not exists public.records (
   id uuid primary key default gen_random_uuid(),
   instance_id uuid not null references public.instances(id) on delete cascade,
-  record_type text not null check (record_type in ('places','assets','stock','loose_material')),
+  record_type text not null,
   name text not null,
   code text,
   category text not null,
@@ -47,6 +48,8 @@ create table if not exists public.records (
   longitude double precision not null,
   photo_path text,
   public_visible boolean not null default true,
+  data jsonb not null default '{}'::jsonb,
+  updated_by_email text,
   source_submission_id uuid,
   updated_by uuid references auth.users(id),
   created_at timestamptz not null default now(),
@@ -57,7 +60,7 @@ create table if not exists public.submissions (
   id uuid primary key default gen_random_uuid(),
   instance_id uuid not null references public.instances(id) on delete cascade,
   submission_type text not null check (submission_type in ('new_record','stock_change')),
-  record_type text not null check (record_type in ('places','assets','stock','loose_material')),
+  record_type text not null,
   item_name text not null,
   category text not null,
   description text,
@@ -68,9 +71,10 @@ create table if not exists public.submissions (
   gps_latitude double precision not null,
   gps_longitude double precision not null,
   gps_accuracy double precision,
-  contact_name text not null,
-  contact_method text not null check (contact_method in ('phone','email','assigned_username')),
-  contact_value text not null,
+  contact_name text,
+  contact_method text,
+  contact_value text,
+  data jsonb not null default '{}'::jsonb,
   photo_path text not null,
   status text not null default 'pending' check (status in ('pending','approved','rejected')),
   moderated_by uuid references auth.users(id),
@@ -111,6 +115,14 @@ create or replace function public.can_view_instance(target uuid)
 returns boolean language sql stable security definer set search_path = public
 as $$ select exists(select 1 from public.instances where id=target and (access_mode='public' or created_by=auth.uid() or exists(select 1 from public.instance_members where instance_id=target and user_id=auth.uid()))) $$;
 
+create or replace function public.can_view_module(target uuid, module_id text)
+returns boolean language sql stable security definer set search_path = public
+as $$ select exists(select 1 from public.instances i where i.id=target and (exists(select 1 from public.instance_members m where m.instance_id=i.id and m.user_id=auth.uid()) or i.module_definitions='[]'::jsonb or exists(select 1 from jsonb_array_elements(i.module_definitions) d where d->>'id'=module_id and coalesce((d->>'public_visible')::boolean,false)))) $$;
+
+create or replace function public.can_submit_module(target uuid, module_id text)
+returns boolean language sql stable security definer set search_path = public
+as $$ select exists(select 1 from public.instances i where i.id=target and (i.module_definitions='[]'::jsonb or exists(select 1 from jsonb_array_elements(i.module_definitions) d where d->>'id'=module_id and coalesce((d->>'public_submit')::boolean,false)))) $$;
+
 drop policy if exists "instances visible by access" on public.instances;
 create policy "instances visible by access" on public.instances for select using (access_mode='public' or created_by=auth.uid() or public.can_view_instance(id));
 drop policy if exists "authenticated create instances" on public.instances;
@@ -126,14 +138,14 @@ drop policy if exists "admins manage membership" on public.instance_members;
 create policy "admins manage membership" on public.instance_members for update to authenticated using (public.is_instance_admin(instance_id)) with check (public.is_instance_admin(instance_id));
 
 drop policy if exists "visible records can be read" on public.records;
-create policy "visible records can be read" on public.records for select using (public.can_view_instance(instance_id) and (public_visible or public.is_instance_admin(instance_id)));
+create policy "visible records can be read" on public.records for select using (public.can_view_instance(instance_id) and (public.is_instance_admin(instance_id) or (public_visible and public.can_view_module(instance_id,record_type))));
 drop policy if exists "admins create records" on public.records;
 create policy "admins create records" on public.records for insert to authenticated with check (public.is_instance_admin(instance_id));
 drop policy if exists "admins update records" on public.records;
 create policy "admins update records" on public.records for update to authenticated using (public.is_instance_admin(instance_id)) with check (public.is_instance_admin(instance_id));
 
 drop policy if exists "visitors submit to visible instances" on public.submissions;
-create policy "visitors submit to visible instances" on public.submissions for insert to anon,authenticated with check (status='pending' and public.can_view_instance(instance_id));
+create policy "visitors submit to visible instances" on public.submissions for insert to anon,authenticated with check (status='pending' and public.can_view_instance(instance_id) and public.can_submit_module(instance_id,record_type));
 drop policy if exists "admins review submissions" on public.submissions;
 create policy "admins review submissions" on public.submissions for select to authenticated using (public.is_instance_admin(instance_id));
 drop policy if exists "admins moderate submissions" on public.submissions;

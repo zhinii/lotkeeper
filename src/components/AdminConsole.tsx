@@ -1,24 +1,631 @@
 import { FormEvent, useEffect, useState } from "react";
-import { db, getSession, signIn, signOut, signedUrl, upload } from "../lib/supabase";
+import {
+  db,
+  getSession,
+  signIn,
+  signOut,
+  signedUrl,
+  upload,
+} from "../lib/supabase";
 import type { Instance, ModuleKey, Session, Submission } from "../types";
+import GeoMap from "./GeoMap";
 
-const moduleOptions: { key: ModuleKey; title: string; description: string }[] = [
-  { key: "places", title: "Places", description: "Destinations, attractions, facilities, trails, departments" },
-  { key: "assets", title: "Assets", description: "Vehicles, machinery, tools, rental and durable equipment" },
-  { key: "stock", title: "Stock", description: "Sellable or consumable quantities with units" },
-  { key: "loose_material", title: "Loose material", description: "Scrap, offcuts, salvage, temporary piles and finds" },
-];
+const moduleOptions: { key: ModuleKey; title: string; description: string }[] =
+  [
+    {
+      key: "places",
+      title: "Places",
+      description: "Destinations, attractions, facilities, trails, departments",
+    },
+    {
+      key: "assets",
+      title: "Assets",
+      description: "Vehicles, machinery, tools, rental and durable equipment",
+    },
+    {
+      key: "stock",
+      title: "Stock",
+      description: "Sellable or consumable quantities with units",
+    },
+    {
+      key: "loose_material",
+      title: "Loose material",
+      description: "Scrap, offcuts, salvage, temporary piles and finds",
+    },
+  ];
 
-export default function AdminConsole({ navigate }: { navigate: (route: string) => void }) {
-  const [session, setSession] = useState<Session | null>(getSession()); const [instances, setInstances] = useState<Instance[]>([]); const [selected, setSelected] = useState<Instance | null>(null); const [submissions, setSubmissions] = useState<Submission[]>([]); const [message, setMessage] = useState(""); const [tab, setTab] = useState<"instances" | "review">("instances");
-  async function loadInstances() { if (!getSession()) return; try { const rows = await db<Instance[]>("instances", "select=*&order=created_at.desc"); setInstances(rows); const current = selected ? rows.find((row) => row.id === selected.id) : rows[0]; setSelected(current || null); } catch (e) { setMessage(e instanceof Error ? e.message : "Could not load instances."); } }
-  async function loadSubmissions(instance: Instance) { try { setSubmissions(await db<Submission[]>("submissions", `instance_id=eq.${instance.id}&select=*&order=submitted_at.desc`)); } catch (e) { setMessage(e instanceof Error ? e.message : "Could not load review queue."); } }
-  useEffect(() => { loadInstances(); }, [session]); useEffect(() => { if (selected) loadSubmissions(selected); }, [selected?.id]);
-  async function login(event: FormEvent<HTMLFormElement>) { event.preventDefault(); const form = new FormData(event.currentTarget); try { const next = await signIn(String(form.get("email")), String(form.get("password"))); setSession(next); setMessage(""); } catch (e) { setMessage(e instanceof Error ? e.message : "Sign-in failed."); } }
-  async function createInstance(event: FormEvent<HTMLFormElement>) { event.preventDefault(); if (!session) return; const form = new FormData(event.currentTarget); const name = String(form.get("name") || "").trim(); const slug = String(form.get("slug") || "").trim().toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/-+/g, "-"); const modules = moduleOptions.filter(({ key }) => form.get(key) === "on").map(({ key }) => key); if (!modules.length) return setMessage("Enable at least one feature module."); const id = crypto.randomUUID(); try { const [created] = await db<Instance[]>("instances", "select=*", { method: "POST", prefer: "return=representation", body: { id, name, slug, site_name: String(form.get("siteName") || "Main Site"), access_mode: form.get("accessMode"), modules, terminology: Object.fromEntries(moduleOptions.map(({ key, title }) => [key, String(form.get(`term-${key}`) || title)])), latitude: Number(form.get("latitude")), longitude: Number(form.get("longitude")), map_zoom: Number(form.get("zoom")), created_by: session.user.id } }); await db("instance_members", "", { method: "POST", prefer: "return=minimal", body: { instance_id: id, user_id: session.user.id, role: "admin" } }); setMessage(`${created.name} is configured and ready.`); event.currentTarget.reset(); await loadInstances(); setSelected(created); } catch (e) { setMessage(e instanceof Error ? e.message : "Could not create instance."); } }
-  async function toggleAccess(instance: Instance) { const access_mode = instance.access_mode === "public" ? "private" : "public"; try { await db("instances", `id=eq.${instance.id}`, { method: "PATCH", prefer: "return=minimal", body: { access_mode } }); setMessage(`${instance.name} is now ${access_mode}.`); await loadInstances(); } catch (e) { setMessage(e instanceof Error ? e.message : "Could not update access."); } }
-  async function review(item: Submission, decision: "approved" | "rejected") { if (!session || !selected) return; setMessage(`${decision === "approved" ? "Approving" : "Rejecting"} ${item.item_name}…`); try { if (decision === "approved" && item.submission_type === "new_record") { const privateUrl = await signedUrl("submission-media", item.photo_path); const photo = await fetch(privateUrl).then((response) => response.blob()); const publicPath = `${item.instance_id}/${item.id}.${photo.type.includes("png") ? "png" : "jpg"}`; await upload("public-media", publicPath, photo); await db("records", "", { method: "POST", prefer: "return=minimal", body: { id: crypto.randomUUID(), instance_id: item.instance_id, record_type: item.record_type, name: item.item_name, category: item.category, description: item.description, status: "active", latitude: item.latitude, longitude: item.longitude, photo_path: publicPath, public_visible: true, source_submission_id: item.id, updated_by: session.user.id } }); } if (decision === "approved" && item.submission_type === "stock_change") { await db("stock_events", "", { method: "POST", prefer: "return=minimal", body: { id: crypto.randomUUID(), instance_id: item.instance_id, submission_id: item.id, item_name: item.item_name, quantity: item.quantity, unit: item.quantity_unit, event_type: "reported_removed", created_by: session.user.id } }); } await db("submissions", `id=eq.${item.id}`, { method: "PATCH", prefer: "return=minimal", body: { status: decision, moderated_by: session.user.id, moderated_at: new Date().toISOString() } }); setMessage(`Submission ${decision}.`); await loadSubmissions(selected); } catch (e) { setMessage(e instanceof Error ? e.message : "Review failed."); } }
-  if (!session) return <div className="login-page"><form onSubmit={login}><b className="login-brand">LOTKEEPER ADMIN</b><h1>Sign in</h1><p>Use the administrator account configured in Supabase.</p><label>Email<input name="email" type="email" required/></label><label>Password<input name="password" type="password" required/></label><button>Sign in</button><p className="form-status">{message}</p><button type="button" className="text-button" onClick={() => navigate("home")}>Return to directory</button></form></div>;
+export default function AdminConsole({
+  navigate,
+}: {
+  navigate: (route: string) => void;
+}) {
+  const [mapCenter, setMapCenter] = useState({
+    latitude: 33.4484,
+    longitude: -112.074,
+  });
+  const [mapZoom, setMapZoom] = useState(13);
+  const [placeSearch, setPlaceSearch] = useState("");
+  const [session, setSession] = useState<Session | null>(getSession());
+  const [instances, setInstances] = useState<Instance[]>([]);
+  const [selected, setSelected] = useState<Instance | null>(null);
+  const [submissions, setSubmissions] = useState<Submission[]>([]);
+  const [message, setMessage] = useState("");
+  const [tab, setTab] = useState<"instances" | "review">("instances");
+
+  async function findPlace() {
+    if (!placeSearch.trim()) return;
+    try {
+      const response = await fetch(
+        `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(placeSearch)}`,
+      );
+      const [result] = await response.json();
+      if (!result) {
+        setMessage(
+          "That place was not found. Try a city and state or country.",
+        );
+        return;
+      }
+      setMapCenter({
+        latitude: Number(result.lat),
+        longitude: Number(result.lon),
+      });
+      setMapZoom(13);
+      setMessage(
+        `Map centered on ${result.display_name}. Refine the yellow pin if needed.`,
+      );
+    } catch {
+      setMessage(
+        "Place search is unavailable. You can still move the pin manually.",
+      );
+    }
+  }
+
+  function useCurrentLocation() {
+    navigator.geolocation?.getCurrentPosition(
+      (position) => {
+        setMapCenter({
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+        });
+        setMapZoom(15);
+        setMessage(
+          "Map centered on your current location. Refine the yellow pin if needed.",
+        );
+      },
+      () =>
+        setMessage(
+          "Location permission was unavailable. Search for the city instead.",
+        ),
+      { enableHighAccuracy: true },
+    );
+  }
+  async function loadInstances() {
+    if (!getSession()) return;
+    try {
+      const rows = await db<Instance[]>(
+        "instances",
+        "select=*&order=created_at.desc",
+      );
+      setInstances(rows);
+      const current = selected
+        ? rows.find((row) => row.id === selected.id)
+        : rows[0];
+      setSelected(current || null);
+    } catch (e) {
+      setMessage(e instanceof Error ? e.message : "Could not load instances.");
+    }
+  }
+  async function loadSubmissions(instance: Instance) {
+    try {
+      setSubmissions(
+        await db<Submission[]>(
+          "submissions",
+          `instance_id=eq.${instance.id}&select=*&order=submitted_at.desc`,
+        ),
+      );
+    } catch (e) {
+      setMessage(
+        e instanceof Error ? e.message : "Could not load review queue.",
+      );
+    }
+  }
+  useEffect(() => {
+    loadInstances();
+  }, [session]);
+  useEffect(() => {
+    if (selected) loadSubmissions(selected);
+  }, [selected?.id]);
+  async function login(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    try {
+      const next = await signIn(
+        String(form.get("email")),
+        String(form.get("password")),
+      );
+      setSession(next);
+      setMessage("");
+    } catch (e) {
+      setMessage(e instanceof Error ? e.message : "Sign-in failed.");
+    }
+  }
+  async function createInstance(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!session) return;
+    const form = new FormData(event.currentTarget);
+    const name = String(form.get("name") || "").trim();
+    const slug = String(form.get("slug") || "")
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9-]/g, "-")
+      .replace(/-+/g, "-");
+    const modules = moduleOptions
+      .filter(({ key }) => form.get(key) === "on")
+      .map(({ key }) => key);
+    if (!modules.length)
+      return setMessage("Enable at least one feature module.");
+    const id = crypto.randomUUID();
+    try {
+      const [created] = await db<Instance[]>("instances", "select=*", {
+        method: "POST",
+        prefer: "return=representation",
+        body: {
+          id,
+          name,
+          slug,
+          site_name: String(form.get("siteName") || "Main Site"),
+          access_mode: form.get("accessMode"),
+          modules,
+          terminology: Object.fromEntries(
+            moduleOptions.map(({ key, title }) => [
+              key,
+              String(form.get(`term-${key}`) || title),
+            ]),
+          ),
+          latitude: Number(form.get("latitude")),
+          longitude: Number(form.get("longitude")),
+          map_zoom: Number(form.get("zoom")),
+          created_by: session.user.id,
+        },
+      });
+      await db("instance_members", "", {
+        method: "POST",
+        prefer: "return=minimal",
+        body: { instance_id: id, user_id: session.user.id, role: "admin" },
+      });
+      setMessage(`${created.name} is configured and ready.`);
+      event.currentTarget.reset();
+      await loadInstances();
+      setSelected(created);
+    } catch (e) {
+      setMessage(e instanceof Error ? e.message : "Could not create instance.");
+    }
+  }
+  async function toggleAccess(instance: Instance) {
+    const access_mode =
+      instance.access_mode === "public" ? "private" : "public";
+    try {
+      await db("instances", `id=eq.${instance.id}`, {
+        method: "PATCH",
+        prefer: "return=minimal",
+        body: { access_mode },
+      });
+      setMessage(`${instance.name} is now ${access_mode}.`);
+      await loadInstances();
+    } catch (e) {
+      setMessage(e instanceof Error ? e.message : "Could not update access.");
+    }
+  }
+  async function review(item: Submission, decision: "approved" | "rejected") {
+    if (!session || !selected) return;
+    setMessage(
+      `${decision === "approved" ? "Approving" : "Rejecting"} ${item.item_name}…`,
+    );
+    try {
+      if (decision === "approved" && item.submission_type === "new_record") {
+        const privateUrl = await signedUrl("submission-media", item.photo_path);
+        const photo = await fetch(privateUrl).then((response) =>
+          response.blob(),
+        );
+        const publicPath = `${item.instance_id}/${item.id}.${photo.type.includes("png") ? "png" : "jpg"}`;
+        await upload("public-media", publicPath, photo);
+        await db("records", "", {
+          method: "POST",
+          prefer: "return=minimal",
+          body: {
+            id: crypto.randomUUID(),
+            instance_id: item.instance_id,
+            record_type: item.record_type,
+            name: item.item_name,
+            category: item.category,
+            description: item.description,
+            status: "active",
+            latitude: item.latitude,
+            longitude: item.longitude,
+            photo_path: publicPath,
+            public_visible: true,
+            source_submission_id: item.id,
+            updated_by: session.user.id,
+          },
+        });
+      }
+      if (decision === "approved" && item.submission_type === "stock_change") {
+        await db("stock_events", "", {
+          method: "POST",
+          prefer: "return=minimal",
+          body: {
+            id: crypto.randomUUID(),
+            instance_id: item.instance_id,
+            submission_id: item.id,
+            item_name: item.item_name,
+            quantity: item.quantity,
+            unit: item.quantity_unit,
+            event_type: "reported_removed",
+            created_by: session.user.id,
+          },
+        });
+      }
+      await db("submissions", `id=eq.${item.id}`, {
+        method: "PATCH",
+        prefer: "return=minimal",
+        body: {
+          status: decision,
+          moderated_by: session.user.id,
+          moderated_at: new Date().toISOString(),
+        },
+      });
+      setMessage(`Submission ${decision}.`);
+      await loadSubmissions(selected);
+    } catch (e) {
+      setMessage(e instanceof Error ? e.message : "Review failed.");
+    }
+  }
+  if (!session)
+    return (
+      <div className="login-page">
+        <form onSubmit={login}>
+          <b className="login-brand">LOTKEEPER ADMIN</b>
+          <h1>Sign in</h1>
+          <p>Use the administrator account configured in Supabase.</p>
+          <label>
+            Email
+            <input name="email" type="email" required />
+          </label>
+          <label>
+            Password
+            <input name="password" type="password" required />
+          </label>
+          <button>Sign in</button>
+          <p className="form-status">{message}</p>
+          <button
+            type="button"
+            className="text-button"
+            onClick={() => navigate("home")}
+          >
+            Return to directory
+          </button>
+        </form>
+      </div>
+    );
   const pending = submissions.filter((item) => item.status === "pending");
-  return <div className="admin-page"><header className="admin-top"><button className="wordmark" onClick={() => navigate("home")}><b>LOTKEEPER</b><span>Deployment console</span></button><nav><button className={tab === "instances" ? "active" : ""} onClick={() => setTab("instances")}>Instances</button><button className={tab === "review" ? "active" : ""} onClick={() => setTab("review")}>Review queue <b>{pending.length}</b></button></nav><div><span>{session.user.email}</span><button onClick={() => { signOut(); setSession(null); }}>Sign out</button></div></header><div className="admin-body"><aside className="instance-list"><div><h2>Organizations</h2><span>{instances.length}</span></div>{instances.map((instance) => <button className={selected?.id === instance.id ? "active" : ""} onClick={() => setSelected(instance)} key={instance.id}><strong>{instance.name}</strong><small>{instance.site_name} · {instance.access_mode}</small></button>)}</aside><main className="admin-content"><p className="system-message" aria-live="polite">{message}</p>{tab === "instances" ? <><div className="admin-heading"><div><small>INSTANCE MANAGEMENT</small><h1>Deploy and configure organizations</h1><p>Every instance uses this same GitHub Pages application and receives its own database configuration, URL, access rules, modules, map, and terminology.</p></div>{selected && <button onClick={() => navigate(`site/${selected.slug}`)}>Open selected instance ↗</button>}</div>{selected && <section className="selected-instance"><div><small>SELECTED INSTANCE</small><h2>{selected.name}</h2><code>#/site/{selected.slug}</code></div><div className="config-summary"><span><b>{selected.access_mode}</b> access</span><span><b>{selected.modules.length}</b> modules</span><span><b>{selected.site_name}</b> site</span></div><button onClick={() => toggleAccess(selected)}>Make {selected.access_mode === "public" ? "private" : "public"}</button></section>}<section className="deploy-panel"><h2>Create a new instance</h2><form onSubmit={createInstance}><div className="form-columns"><label>Organization name<input name="name" required placeholder="Example: Page Steel"/></label><label>URL slug<input name="slug" required pattern="[a-z0-9-]+" placeholder="page-steel"/></label><label>Site name<input name="siteName" required defaultValue="Main Site"/></label><label>Access<select name="accessMode"><option value="public">Public directory</option><option value="private">Private, members only</option></select></label></div><h3>Feature modules</h3><div className="module-options">{moduleOptions.map((option) => <label key={option.key}><input type="checkbox" name={option.key} defaultChecked={option.key !== "stock"}/><span><b>{option.title}</b><small>{option.description}</small></span><input name={`term-${option.key}`} defaultValue={option.title} aria-label={`${option.title} label`}/></label>)}</div><h3>Initial map</h3><div className="form-columns map-config"><label>Latitude<input name="latitude" type="number" step="any" required defaultValue="33.4484"/></label><label>Longitude<input name="longitude" type="number" step="any" required defaultValue="-112.0740"/></label><label>Zoom<input name="zoom" type="number" min="3" max="22" defaultValue="17"/></label></div><button className="deploy-button">Create instance</button></form></section></> : <><div className="admin-heading"><div><small>MODERATION</small><h1>Review public submissions</h1><p>Nothing becomes visible and no stock report is accepted until an administrator reviews it.</p></div></div>{!selected && <div className="empty">Select an instance.</div>}{selected && !pending.length && <div className="empty"><h2>Queue is clear</h2><p>No public submissions are waiting.</p></div>}<div className="review-grid">{pending.map((item) => <article key={item.id}><div className="review-tag">{item.submission_type === "stock_change" ? "STOCK USED / REMOVED" : item.record_type.replace("_", " ")}</div><h2>{item.item_name}</h2><p>{item.description || "No description supplied."}</p>{item.quantity && <strong>{item.quantity} {item.quantity_unit}</strong>}<dl><div><dt>Category</dt><dd>{item.category}</dd></div><div><dt>GPS accuracy</dt><dd>{item.gps_accuracy ? `±${Math.round(item.gps_accuracy)} m` : "Unknown"}</dd></div><div><dt>Contributor</dt><dd>{item.contact_name}</dd></div><div><dt>{item.contact_method}</dt><dd>{item.contact_value}</dd></div></dl><div className="review-actions"><a target="_blank" href={`https://www.openstreetmap.org/?mlat=${item.latitude}&mlon=${item.longitude}#map=19/${item.latitude}/${item.longitude}`}>Check pin ↗</a><button className="reject" onClick={() => review(item, "rejected")}>Reject</button><button className="approve" onClick={() => review(item, "approved")}>Approve</button></div></article>)}</div></>}</main></div></div>;
+  return (
+    <div className="admin-page">
+      <header className="admin-top">
+        <button className="wordmark" onClick={() => navigate("home")}>
+          <b>LOTKEEPER</b>
+          <span>Deployment console</span>
+        </button>
+        <nav>
+          <button
+            className={tab === "instances" ? "active" : ""}
+            onClick={() => setTab("instances")}
+          >
+            Instances
+          </button>
+          <button
+            className={tab === "review" ? "active" : ""}
+            onClick={() => setTab("review")}
+          >
+            Review queue <b>{pending.length}</b>
+          </button>
+        </nav>
+        <div>
+          <span>{session.user.email}</span>
+          <button
+            onClick={() => {
+              signOut();
+              setSession(null);
+            }}
+          >
+            Sign out
+          </button>
+        </div>
+      </header>
+      <div className="admin-body">
+        <aside className="instance-list">
+          <div>
+            <h2>Organizations</h2>
+            <span>{instances.length}</span>
+          </div>
+          {instances.map((instance) => (
+            <button
+              className={selected?.id === instance.id ? "active" : ""}
+              onClick={() => setSelected(instance)}
+              key={instance.id}
+            >
+              <strong>{instance.name}</strong>
+              <small>
+                {instance.site_name} · {instance.access_mode}
+              </small>
+            </button>
+          ))}
+        </aside>
+        <main className="admin-content">
+          <p className="system-message" aria-live="polite">
+            {message}
+          </p>
+          {tab === "instances" ? (
+            <>
+              <div className="admin-heading">
+                <div>
+                  <small>INSTANCE MANAGEMENT</small>
+                  <h1>Deploy and configure organizations</h1>
+                  <p>
+                    Every instance uses this same GitHub Pages application and
+                    receives its own database configuration, URL, access rules,
+                    modules, map, and terminology.
+                  </p>
+                </div>
+                {selected && (
+                  <button onClick={() => navigate(`site/${selected.slug}`)}>
+                    Open selected instance ↗
+                  </button>
+                )}
+              </div>
+              {selected && (
+                <section className="selected-instance">
+                  <div>
+                    <small>SELECTED INSTANCE</small>
+                    <h2>{selected.name}</h2>
+                    <code>#/site/{selected.slug}</code>
+                  </div>
+                  <div className="config-summary">
+                    <span>
+                      <b>{selected.access_mode}</b> access
+                    </span>
+                    <span>
+                      <b>{selected.modules.length}</b> modules
+                    </span>
+                    <span>
+                      <b>{selected.site_name}</b> site
+                    </span>
+                  </div>
+                  <button onClick={() => toggleAccess(selected)}>
+                    Make{" "}
+                    {selected.access_mode === "public" ? "private" : "public"}
+                  </button>
+                </section>
+              )}
+              <section className="deploy-panel">
+                <h2>Create a new instance</h2>
+                <form onSubmit={createInstance}>
+                  <div className="form-columns">
+                    <label>
+                      Organization name
+                      <input
+                        name="name"
+                        required
+                        placeholder="Example: Page Steel"
+                      />
+                    </label>
+                    <label>
+                      URL slug
+                      <input
+                        name="slug"
+                        required
+                        pattern="[a-z0-9-]+"
+                        placeholder="page-steel"
+                      />
+                    </label>
+                    <label>
+                      Site name
+                      <input
+                        name="siteName"
+                        required
+                        defaultValue="Main Site"
+                      />
+                    </label>
+                    <label>
+                      Access
+                      <select name="accessMode">
+                        <option value="public">Public directory</option>
+                        <option value="private">Private, members only</option>
+                      </select>
+                    </label>
+                  </div>
+                  <h3>Feature modules</h3>
+                  <div className="module-options">
+                    {moduleOptions.map((option) => (
+                      <label key={option.key}>
+                        <input
+                          type="checkbox"
+                          name={option.key}
+                          defaultChecked={option.key !== "stock"}
+                        />
+                        <span>
+                          <b>{option.title}</b>
+                          <small>{option.description}</small>
+                        </span>
+                        <input
+                          name={`term-${option.key}`}
+                          defaultValue={option.title}
+                          aria-label={`${option.title} label`}
+                        />
+                      </label>
+                    ))}
+                  </div>
+                  <h3>Initial map</h3>
+                  <p className="section-help">
+                    Search for a city, use your current location, then click the
+                    map or drag the yellow pin to select the deployment center.
+                  </p>
+                  <div className="map-search">
+                    <input
+                      value={placeSearch}
+                      onChange={(event) => setPlaceSearch(event.target.value)}
+                      placeholder="City, state or country"
+                      aria-label="Search for a map location"
+                    />
+                    <button type="button" onClick={findPlace}>
+                      Find place
+                    </button>
+                    <button type="button" onClick={useCurrentLocation}>
+                      Use my location
+                    </button>
+                  </div>
+                  <GeoMap
+                    latitude={mapCenter.latitude}
+                    longitude={mapCenter.longitude}
+                    zoom={mapZoom}
+                    picker
+                    onPick={(latitude, longitude) =>
+                      setMapCenter({ latitude, longitude })
+                    }
+                  />
+                  <div className="form-columns map-config">
+                    <label>
+                      Latitude
+                      <input
+                        name="latitude"
+                        type="number"
+                        step="any"
+                        required
+                        value={mapCenter.latitude}
+                        onChange={(event) =>
+                          setMapCenter((current) => ({
+                            ...current,
+                            latitude: Number(event.target.value),
+                          }))
+                        }
+                      />
+                    </label>
+                    <label>
+                      Longitude
+                      <input
+                        name="longitude"
+                        type="number"
+                        step="any"
+                        required
+                        value={mapCenter.longitude}
+                        onChange={(event) =>
+                          setMapCenter((current) => ({
+                            ...current,
+                            longitude: Number(event.target.value),
+                          }))
+                        }
+                      />
+                    </label>
+                    <label>
+                      Zoom
+                      <input
+                        name="zoom"
+                        type="number"
+                        min="3"
+                        max="22"
+                        value={mapZoom}
+                        onChange={(event) =>
+                          setMapZoom(Number(event.target.value))
+                        }
+                      />
+                    </label>
+                  </div>
+                  <button className="deploy-button">Create instance</button>
+                </form>
+              </section>
+            </>
+          ) : (
+            <>
+              <div className="admin-heading">
+                <div>
+                  <small>MODERATION</small>
+                  <h1>Review public submissions</h1>
+                  <p>
+                    Nothing becomes visible and no stock report is accepted
+                    until an administrator reviews it.
+                  </p>
+                </div>
+              </div>
+              {!selected && <div className="empty">Select an instance.</div>}
+              {selected && !pending.length && (
+                <div className="empty">
+                  <h2>Queue is clear</h2>
+                  <p>No public submissions are waiting.</p>
+                </div>
+              )}
+              <div className="review-grid">
+                {pending.map((item) => (
+                  <article key={item.id}>
+                    <div className="review-tag">
+                      {item.submission_type === "stock_change"
+                        ? "STOCK USED / REMOVED"
+                        : item.record_type.replace("_", " ")}
+                    </div>
+                    <h2>{item.item_name}</h2>
+                    <p>{item.description || "No description supplied."}</p>
+                    {item.quantity && (
+                      <strong>
+                        {item.quantity} {item.quantity_unit}
+                      </strong>
+                    )}
+                    <dl>
+                      <div>
+                        <dt>Category</dt>
+                        <dd>{item.category}</dd>
+                      </div>
+                      <div>
+                        <dt>GPS accuracy</dt>
+                        <dd>
+                          {item.gps_accuracy
+                            ? `±${Math.round(item.gps_accuracy)} m`
+                            : "Unknown"}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>Contributor</dt>
+                        <dd>{item.contact_name}</dd>
+                      </div>
+                      <div>
+                        <dt>{item.contact_method}</dt>
+                        <dd>{item.contact_value}</dd>
+                      </div>
+                    </dl>
+                    <div className="review-actions">
+                      <a
+                        target="_blank"
+                        href={`https://www.openstreetmap.org/?mlat=${item.latitude}&mlon=${item.longitude}#map=19/${item.latitude}/${item.longitude}`}
+                      >
+                        Check pin ↗
+                      </a>
+                      <button
+                        className="reject"
+                        onClick={() => review(item, "rejected")}
+                      >
+                        Reject
+                      </button>
+                      <button
+                        className="approve"
+                        onClick={() => review(item, "approved")}
+                      >
+                        Approve
+                      </button>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            </>
+          )}
+        </main>
+      </div>
+    </div>
+  );
 }

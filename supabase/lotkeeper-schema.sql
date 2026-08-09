@@ -177,6 +177,8 @@ drop policy if exists "admins delete submission photos" on storage.objects;
 create policy "admins delete submission photos" on storage.objects for delete to authenticated using (bucket_id='submission-media' and public.is_instance_admin(((storage.foldername(name))[1])::uuid));
 drop policy if exists "admins publish photos" on storage.objects;
 create policy "admins publish photos" on storage.objects for insert to authenticated with check (bucket_id='public-media' and public.is_instance_admin(((storage.foldername(name))[1])::uuid));
+drop policy if exists "admins update published photos" on storage.objects;
+create policy "admins update published photos" on storage.objects for update to authenticated using (bucket_id='public-media' and public.is_instance_admin(((storage.foldername(name))[1])::uuid)) with check (bucket_id='public-media' and public.is_instance_admin(((storage.foldername(name))[1])::uuid));
 drop policy if exists "public reads published photos" on storage.objects;
 create policy "public reads published photos" on storage.objects for select using (bucket_id='public-media');
 

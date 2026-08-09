@@ -278,6 +278,7 @@ export default function AdminConsole({
   }
   async function review(item: Submission, decision: "approved" | "rejected") {
     if (!session || !selected) return;
+    let stage = "updating the submission";
     setMessage(
       `${decision === "approved" ? "Approving" : "Rejecting"} ${item.item_name}…`,
     );
@@ -293,17 +294,21 @@ export default function AdminConsole({
                 ?.public_visible,
           ),
         );
+        stage = "opening the private submission photo";
         const privateUrl = await signedUrl("submission-media", item.photo_path);
+        stage = "downloading the private submission photo";
         const photo = await fetch(privateUrl).then((response) =>
           response.blob(),
         );
         const publicPath = `${item.instance_id}/${item.id}.${photo.type.includes("png") ? "png" : "jpg"}`;
+        stage = "publishing the approved photo";
         await upload("public-media", publicPath, photo);
-        await db("records", "", {
+        stage = "creating the approved public record";
+        await db("records", "on_conflict=id", {
           method: "POST",
-          prefer: "return=minimal",
+          prefer: "resolution=merge-duplicates,return=minimal",
           body: {
-            id: crypto.randomUUID(),
+            id: item.id,
             instance_id: item.instance_id,
             record_type: item.record_type,
             name: item.item_name,
@@ -322,6 +327,7 @@ export default function AdminConsole({
         });
       }
       if (decision === "approved" && item.submission_type === "stock_change") {
+        stage = "recording the approved stock change";
         await db("stock_events", "", {
           method: "POST",
           prefer: "return=minimal",
@@ -337,6 +343,7 @@ export default function AdminConsole({
           },
         });
       }
+      stage = "marking the submission resolved";
       await db("submissions", `id=eq.${item.id}`, {
         method: "PATCH",
         prefer: "return=minimal",
@@ -349,7 +356,9 @@ export default function AdminConsole({
       setMessage(`Submission ${decision}.`);
       await loadSubmissions(selected);
     } catch (e) {
-      setMessage(e instanceof Error ? e.message : "Review failed.");
+      setMessage(
+        `${stage}: ${e instanceof Error ? e.message : "Review failed."}`,
+      );
     }
   }
   async function deleteSubmissionLegacy(item: Submission) {

@@ -857,11 +857,33 @@ export default function AdminConsole({
                       </div>
                       <div>
                         <dt>Contributor</dt>
-                        <dd>{item.contact_name}</dd>
+                        <dd>{item.contact_name || "Anonymous"}</dd>
+                      </div>
+                      {item.contact_value && (
+                        <div>
+                          <dt>{item.contact_method}</dt>
+                          <dd>{item.contact_value}</dd>
+                        </div>
+                      )}
+                      <div>
+                        <dt>Submitted</dt>
+                        <dd>{new Date(item.submitted_at).toLocaleString()}</dd>
                       </div>
                       <div>
-                        <dt>{item.contact_method}</dt>
-                        <dd>{item.contact_value}</dd>
+                        <dt>Photo captured</dt>
+                        <dd>
+                          {item.photo_taken_at
+                            ? new Date(item.photo_taken_at).toLocaleString()
+                            : "Not available"}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>Location source</dt>
+                        <dd>
+                          {item.location_source === "photo_exif"
+                            ? "Photo GPS"
+                            : "Browser GPS"}
+                        </dd>
                       </div>
                     </dl>
                     <div className="review-actions">

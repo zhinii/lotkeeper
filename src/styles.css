@@ -601,6 +601,35 @@ button {
   padding: 13px 17px;
   font-weight: 800;
 }
+.photo-metadata {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 10px;
+  border-left: 5px solid var(--yellow);
+  background: var(--soft);
+  padding: 12px;
+  font-size: 11px;
+}
+.photo-metadata span {
+  color: var(--muted);
+}
+.location-preview .geo-map {
+  height: 280px;
+  min-height: 260px;
+}
+.submit-discrete {
+  display: block;
+  width: 100%;
+  margin-top: 28px;
+  border-top: 8px solid var(--navy) !important;
+  font-size: 15px;
+  padding: 17px !important;
+}
+.submit-discrete:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
 .form-wrap .geo-map {
   height: 390px;
   margin: 15px 0;

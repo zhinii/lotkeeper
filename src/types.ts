@@ -74,6 +74,8 @@ export type Submission = {
   photo_path: string;
   status: "pending" | "approved" | "rejected";
   submitted_at: string;
+  photo_taken_at: string | null;
+  location_source: "photo_exif" | "browser_gps";
 };
 
 export type Session = {

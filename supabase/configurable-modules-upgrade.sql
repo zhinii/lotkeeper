@@ -5,6 +5,8 @@ alter table public.instances add column if not exists module_definitions jsonb n
 alter table public.records add column if not exists data jsonb not null default '{}'::jsonb;
 alter table public.records add column if not exists updated_by_email text;
 alter table public.submissions add column if not exists data jsonb not null default '{}'::jsonb;
+alter table public.submissions add column if not exists photo_taken_at timestamptz;
+alter table public.submissions add column if not exists location_source text;
 alter table public.submissions alter column contact_name drop not null;
 alter table public.submissions alter column contact_method drop not null;
 alter table public.submissions alter column contact_value drop not null;

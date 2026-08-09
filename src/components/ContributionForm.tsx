@@ -2,6 +2,7 @@ import { FormEvent, useEffect, useState } from "react";
 import { db, upload } from "../lib/supabase";
 import type { Instance, ModuleKey } from "../types";
 import { definitions } from "../lib/modules";
+import { gps as readGps, parse as readExif } from "exifr";
 import GeoMap from "./GeoMap";
 
 export default function ContributionForm({
@@ -26,6 +27,10 @@ export default function ContributionForm({
   const [preview, setPreview] = useState("");
   const [status, setStatus] = useState("");
   const [sending, setSending] = useState(false);
+  const [locationSource, setLocationSource] = useState<
+    "photo" | "browser" | null
+  >(null);
+  const [photoTakenAt, setPhotoTakenAt] = useState<string | null>(null);
   useEffect(() => {
     if (!photo) {
       setPreview("");
@@ -35,6 +40,44 @@ export default function ContributionForm({
     setPreview(url);
     return () => URL.revokeObjectURL(url);
   }, [photo]);
+  async function choosePhoto(file: File | null) {
+    setPhoto(file);
+    setGps(null);
+    setPin(null);
+    setLocationSource(null);
+    setPhotoTakenAt(null);
+    if (!file) return;
+    setStatus("Checking the photo for location and capture date…");
+    try {
+      const [coordinates, metadata] = await Promise.all([
+        readGps(file).catch(() => null),
+        readExif(file, ["DateTimeOriginal", "CreateDate"]).catch(() => null),
+      ]);
+      const captured = metadata?.DateTimeOriginal || metadata?.CreateDate;
+      if (captured instanceof Date && !Number.isNaN(captured.getTime()))
+        setPhotoTakenAt(captured.toISOString());
+      if (coordinates?.latitude != null && coordinates?.longitude != null) {
+        const point = {
+          lat: coordinates.latitude,
+          lng: coordinates.longitude,
+          accuracy: 0,
+        };
+        setGps(point);
+        setPin(point);
+        setLocationSource("photo");
+        setStatus(
+          "GPS was found in the photo. Confirm or adjust the pin on the map.",
+        );
+      } else
+        setStatus(
+          "This photo has no embedded GPS. Capture your current location to continue.",
+        );
+    } catch {
+      setStatus(
+        "Photo metadata could not be read. Capture your current location to continue.",
+      );
+    }
+  }
   function locate() {
     if (!navigator.geolocation)
       return setStatus("This browser cannot provide GPS.");
@@ -48,6 +91,7 @@ export default function ContributionForm({
         };
         setGps(point);
         setPin(point);
+        setLocationSource("browser");
         setStatus(
           `GPS captured. Approximate accuracy: ±${Math.round(coords.accuracy)} m. Move the pin if needed.`,
         );
@@ -92,7 +136,7 @@ export default function ContributionForm({
           submission_type: mode,
           record_type: mode === "stock_change" ? "stock" : type,
           item_name: String(form.get("itemName") || "").trim(),
-          category: String(form.get("category") || "").trim(),
+          category: selectedModule?.name || "Uncategorized",
           description: String(form.get("description") || "").trim() || null,
           quantity:
             mode === "stock_change" ? Number(form.get("quantity")) : null,
@@ -111,6 +155,9 @@ export default function ContributionForm({
           contact_value: String(form.get("contactValue") || "").trim() || null,
           data: customData,
           photo_path: photoPath,
+          photo_taken_at: photoTakenAt,
+          location_source:
+            locationSource === "photo" ? "photo_exif" : "browser_gps",
           status: "pending",
         },
       });
@@ -201,10 +248,6 @@ export default function ContributionForm({
               What is it?
               <input name="itemName" required maxLength={140} />
             </label>
-            <label>
-              Category
-              <input name="category" required maxLength={80} />
-            </label>
             {mode === "stock_change" && (
               <div className="field-pair">
                 <label>
@@ -256,7 +299,7 @@ export default function ContributionForm({
                 accept="image/*"
                 capture="environment"
                 required
-                onChange={(e) => setPhoto(e.target.files?.[0] || null)}
+                onChange={(e) => choosePhoto(e.target.files?.[0] || null)}
               />
               {preview ? (
                 <img src={preview} alt="Selected" />
@@ -267,14 +310,48 @@ export default function ContributionForm({
                 </>
               )}
             </label>
+            {photo && (
+              <div className="photo-metadata">
+                <b>
+                  {locationSource === "photo"
+                    ? "Photo GPS found"
+                    : "No photo GPS found"}
+                </b>
+                <span>
+                  {photoTakenAt
+                    ? `Photo captured ${new Date(photoTakenAt).toLocaleString()}`
+                    : "Photo capture date unavailable"}
+                </span>
+              </div>
+            )}
           </section>
-          <section>
+          <section className="location-preview">
             <h2>
-              <span>4</span>Capture GPS and set the pin
+              <span>4</span>Confirm the location
             </h2>
-            <button type="button" className="gps-button" onClick={locate}>
-              Use my current GPS location
-            </button>
+            {!gps && (
+              <p>
+                Embedded photo GPS was not available. Capture your current
+                browser location to continue.
+              </p>
+            )}
+            {locationSource === "photo" && (
+              <p>
+                Location came from the image. Check the map and move the pin if
+                necessary.
+              </p>
+            )}
+            {locationSource === "browser" && (
+              <p>
+                Location came from this device. Check the map and move the pin
+                if necessary.
+              </p>
+            )}
+            {locationSource !== "photo" && (
+              <button type="button" className="gps-button" onClick={locate}>
+                Capture current location
+              </button>
+            )}
             {pin && (
               <GeoMap
                 latitude={pin.lat}
@@ -317,7 +394,10 @@ export default function ContributionForm({
                 <input name="contactValue" />
               </label>
             </div>
-            <button className="primary-action" disabled={sending}>
+            <button
+              className="primary-action submit-discrete"
+              disabled={sending || !photo || !gps || !pin}
+            >
               {sending ? "Submitting…" : "Send for administrator review"}
             </button>
             <p className="form-status" aria-live="polite">

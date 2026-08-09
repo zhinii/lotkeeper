@@ -76,6 +76,8 @@ create table if not exists public.submissions (
   contact_value text,
   data jsonb not null default '{}'::jsonb,
   photo_path text not null,
+  photo_taken_at timestamptz,
+  location_source text,
   status text not null default 'pending' check (status in ('pending','approved','rejected')),
   moderated_by uuid references auth.users(id),
   moderated_at timestamptz,

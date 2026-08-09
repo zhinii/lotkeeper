@@ -153,10 +153,8 @@ export default function GeoMap({
   }, [records, selectedId]);
 
   useEffect(() => {
-    if (pickMarker.current) {
-      pickMarker.current.setLngLat([longitude, latitude]);
-      map.current?.easeTo({ center: [longitude, latitude] });
-    }
-  }, [latitude, longitude]);
+    if (pickMarker.current) pickMarker.current.setLngLat([longitude, latitude]);
+    map.current?.easeTo({ center: [longitude, latitude], zoom });
+  }, [latitude, longitude, zoom]);
   return <div className="geo-map" ref={element} />;
 }

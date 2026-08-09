@@ -591,15 +591,34 @@ export default function AdminConsole({
                       </label>
                       <label>
                         Zoom
-                        <input
-                          type="number"
-                          min="3"
-                          max="22"
-                          value={editZoom}
-                          onChange={(event) =>
-                            setEditZoom(Number(event.target.value))
-                          }
-                        />
+                        <div className="zoom-control">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setEditZoom((value) => Math.max(3, value - 1))
+                            }
+                          >
+                            −
+                          </button>
+                          <input
+                            type="range"
+                            min="3"
+                            max="22"
+                            value={editZoom}
+                            onChange={(event) =>
+                              setEditZoom(Number(event.target.value))
+                            }
+                          />
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setEditZoom((value) => Math.min(22, value + 1))
+                            }
+                          >
+                            +
+                          </button>
+                          <output>{editZoom}</output>
+                        </div>
                       </label>
                     </div>
                     <button className="deploy-button">

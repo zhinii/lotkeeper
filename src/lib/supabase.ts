@@ -94,6 +94,17 @@ export async function upload(bucket: string, path: string, file: Blob) {
   return path;
 }
 
+export async function removeObject(bucket: string, path: string) {
+  const response = await fetch(
+    `${SUPABASE_URL}/storage/v1/object/${bucket}/${path}`,
+    { method: "DELETE", headers: authHeaders(false) },
+  );
+  if (!response.ok && response.status !== 404)
+    throw new Error(
+      (await response.text()) || "Could not delete the stored photo.",
+    );
+}
+
 export async function signedUrl(bucket: string, path: string, expiresIn = 900) {
   const response = await fetch(
     `${SUPABASE_URL}/storage/v1/object/sign/${bucket}/${path}`,

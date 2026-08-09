@@ -111,7 +111,7 @@ alter table public.stock_events enable row level security;
 
 create or replace function public.is_instance_admin(target uuid)
 returns boolean language sql stable security definer set search_path = public
-as $$ select exists(select 1 from public.instance_members where instance_id=target and user_id=auth.uid() and role='admin') $$;
+as $$ select exists(select 1 from public.instances i where i.id=target and (i.created_by=auth.uid() or exists(select 1 from public.instance_members m where m.instance_id=target and m.user_id=auth.uid() and m.role='admin'))) $$;
 
 create or replace function public.can_view_instance(target uuid)
 returns boolean language sql stable security definer set search_path = public
@@ -152,11 +152,15 @@ drop policy if exists "admins review submissions" on public.submissions;
 create policy "admins review submissions" on public.submissions for select to authenticated using (public.is_instance_admin(instance_id));
 drop policy if exists "admins moderate submissions" on public.submissions;
 create policy "admins moderate submissions" on public.submissions for update to authenticated using (public.is_instance_admin(instance_id)) with check (public.is_instance_admin(instance_id));
+drop policy if exists "admins delete submissions" on public.submissions;
+create policy "admins delete submissions" on public.submissions for delete to authenticated using (public.is_instance_admin(instance_id) and status in ('approved','rejected'));
 
 drop policy if exists "members see stock history" on public.stock_events;
 create policy "members see stock history" on public.stock_events for select to authenticated using (public.can_view_instance(instance_id));
 drop policy if exists "admins record stock events" on public.stock_events;
 create policy "admins record stock events" on public.stock_events for insert to authenticated with check (public.is_instance_admin(instance_id));
+drop policy if exists "admins update stock history" on public.stock_events;
+create policy "admins update stock history" on public.stock_events for update to authenticated using (public.is_instance_admin(instance_id)) with check (public.is_instance_admin(instance_id));
 
 insert into storage.buckets(id,name,public,file_size_limit,allowed_mime_types)
 values ('submission-media','submission-media',false,10485760,array['image/jpeg','image/png','image/webp','image/heic','image/heif'])
@@ -169,6 +173,8 @@ drop policy if exists "visitors upload submission photos" on storage.objects;
 create policy "visitors upload submission photos" on storage.objects for insert to anon,authenticated with check (bucket_id='submission-media' and public.can_view_instance(((storage.foldername(name))[1])::uuid));
 drop policy if exists "admins read submission photos" on storage.objects;
 create policy "admins read submission photos" on storage.objects for select to authenticated using (bucket_id='submission-media' and public.is_instance_admin(((storage.foldername(name))[1])::uuid));
+drop policy if exists "admins delete submission photos" on storage.objects;
+create policy "admins delete submission photos" on storage.objects for delete to authenticated using (bucket_id='submission-media' and public.is_instance_admin(((storage.foldername(name))[1])::uuid));
 drop policy if exists "admins publish photos" on storage.objects;
 create policy "admins publish photos" on storage.objects for insert to authenticated with check (bucket_id='public-media' and public.is_instance_admin(((storage.foldername(name))[1])::uuid));
 drop policy if exists "public reads published photos" on storage.objects;

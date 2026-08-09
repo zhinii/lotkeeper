@@ -6,6 +6,7 @@ import {
   signOut,
   signedUrl,
   upload,
+  removeObject,
 } from "../lib/supabase";
 import type { Instance, ModuleDefinition, Session, Submission } from "../types";
 import { definitions } from "../lib/modules";
@@ -35,6 +36,9 @@ export default function AdminConsole({
   const [submissions, setSubmissions] = useState<Submission[]>([]);
   const [message, setMessage] = useState("");
   const [tab, setTab] = useState<"instances" | "review">("instances");
+  const [reviewView, setReviewView] = useState<"pending" | "resolved">(
+    "pending",
+  );
   const [instanceView, setInstanceView] = useState<"configure" | "create">(
     "configure",
   );
@@ -348,6 +352,60 @@ export default function AdminConsole({
       setMessage(e instanceof Error ? e.message : "Review failed.");
     }
   }
+  async function deleteSubmissionLegacy(item: Submission) {
+    if (item.status === "pending")
+      return setMessage("Review the submission before deleting it.");
+    if (
+      !confirm(
+        `Permanently delete the ${item.status} submission for “${item.item_name}”? The published record, if approved, will remain.`,
+      )
+    )
+      return;
+    try {
+      await removeObject("submission-media", item.photo_path);
+      await db("submissions", `id=eq.${item.id}`, {
+        method: "DELETE",
+        prefer: "return=minimal",
+      });
+      setMessage(
+        "Resolved submission and its private source photo deleted. Any approved public record remains available.",
+      );
+      if (selected) await loadSubmissions(selected);
+    } catch (e) {
+      setMessage(
+        e instanceof Error ? e.message : "Could not delete the submission.",
+      );
+    }
+  }
+  async function deleteSubmission(item: Submission) {
+    if (!selected || item.status === "pending") return;
+    if (
+      !confirm(
+        `Delete the ${item.status} submission for “${item.item_name}”? The approved public record and stock history will remain.`,
+      )
+    )
+      return;
+    try {
+      await db("stock_events", `submission_id=eq.${item.id}`, {
+        method: "PATCH",
+        prefer: "return=minimal",
+        body: { submission_id: null },
+      });
+      await removeObject("submission-media", item.photo_path);
+      await db("submissions", `id=eq.${item.id}`, {
+        method: "DELETE",
+        prefer: "return=minimal",
+      });
+      setMessage(
+        "Reviewed submission and its private original photo were deleted.",
+      );
+      await loadSubmissions(selected);
+    } catch (e) {
+      setMessage(
+        e instanceof Error ? e.message : "Could not delete the submission.",
+      );
+    }
+  }
   if (!session)
     return (
       <div className="login-page">
@@ -376,6 +434,8 @@ export default function AdminConsole({
       </div>
     );
   const pending = submissions.filter((item) => item.status === "pending");
+  const resolved = submissions.filter((item) => item.status !== "pending");
+  const visibleSubmissions = reviewView === "pending" ? pending : resolved;
   return (
     <div className="admin-page">
       <header className="admin-top">
@@ -820,17 +880,40 @@ export default function AdminConsole({
                   </p>
                 </div>
               </div>
+              <div className="review-view-tabs">
+                <button
+                  className={reviewView === "pending" ? "active" : ""}
+                  onClick={() => setReviewView("pending")}
+                >
+                  Needs review <b>{pending.length}</b>
+                </button>
+                <button
+                  className={reviewView === "resolved" ? "active" : ""}
+                  onClick={() => setReviewView("resolved")}
+                >
+                  Resolved <b>{resolved.length}</b>
+                </button>
+              </div>
               {!selected && <div className="empty">Select an instance.</div>}
-              {selected && !pending.length && (
+              {selected && !visibleSubmissions.length && (
                 <div className="empty">
-                  <h2>Queue is clear</h2>
-                  <p>No public submissions are waiting.</p>
+                  <h2>
+                    {reviewView === "pending"
+                      ? "Queue is clear"
+                      : "No resolved submissions"}
+                  </h2>
+                  <p>
+                    {reviewView === "pending"
+                      ? "No public submissions are waiting."
+                      : "Approved and rejected submissions will appear here."}
+                  </p>
                 </div>
               )}
               <div className="review-grid">
-                {pending.map((item) => (
+                {visibleSubmissions.map((item) => (
                   <article key={item.id}>
                     <div className="review-tag">
+                      {item.status !== "pending" ? `${item.status} · ` : ""}
                       {item.submission_type === "stock_change"
                         ? "STOCK USED / REMOVED"
                         : item.record_type.replace("_", " ")}
@@ -895,18 +978,29 @@ export default function AdminConsole({
                       >
                         Check pin ↗
                       </a>
-                      <button
-                        className="reject"
-                        onClick={() => review(item, "rejected")}
-                      >
-                        Reject
-                      </button>
-                      <button
-                        className="approve"
-                        onClick={() => review(item, "approved")}
-                      >
-                        Approve
-                      </button>
+                      {item.status === "pending" ? (
+                        <>
+                          <button
+                            className="reject"
+                            onClick={() => review(item, "rejected")}
+                          >
+                            Reject
+                          </button>
+                          <button
+                            className="approve"
+                            onClick={() => review(item, "approved")}
+                          >
+                            Approve
+                          </button>
+                        </>
+                      ) : (
+                        <button
+                          className="delete-submission"
+                          onClick={() => deleteSubmission(item)}
+                        >
+                          Delete submission
+                        </button>
+                      )}
                     </div>
                   </article>
                 ))}

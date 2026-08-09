@@ -28,7 +28,7 @@ export default function ContributionForm({
   const [status, setStatus] = useState("");
   const [sending, setSending] = useState(false);
   const [locationSource, setLocationSource] = useState<
-    "photo" | "browser" | null
+    "photo" | "browser" | "manual" | null
   >(null);
   const [photoTakenAt, setPhotoTakenAt] = useState<string | null>(null);
   useEffect(() => {
@@ -157,7 +157,11 @@ export default function ContributionForm({
           photo_path: photoPath,
           photo_taken_at: photoTakenAt,
           location_source:
-            locationSource === "photo" ? "photo_exif" : "browser_gps",
+            locationSource === "photo"
+              ? "photo_exif"
+              : locationSource === "browser"
+                ? "browser_gps"
+                : "manual_pin",
           status: "pending",
         },
       });
@@ -332,7 +336,7 @@ export default function ContributionForm({
             {!gps && (
               <p>
                 Embedded photo GPS was not available. Capture your current
-                browser location to continue.
+                location or click the map to place the pin manually.
               </p>
             )}
             {locationSource === "photo" && (
@@ -347,18 +351,33 @@ export default function ContributionForm({
                 if necessary.
               </p>
             )}
+            {locationSource === "manual" && (
+              <p>
+                The pin was placed manually. Staff will see that it was not
+                verified by GPS.
+              </p>
+            )}
             {locationSource !== "photo" && (
               <button type="button" className="gps-button" onClick={locate}>
                 Capture current location
               </button>
             )}
-            {pin && (
+            {photo && (
               <GeoMap
-                latitude={pin.lat}
-                longitude={pin.lng}
-                zoom={18}
+                latitude={pin?.lat ?? instance.latitude}
+                longitude={pin?.lng ?? instance.longitude}
+                zoom={pin ? 18 : instance.map_zoom}
                 picker
-                onPick={(lat, lng) => setPin({ lat, lng })}
+                onPick={(lat, lng) => {
+                  setPin({ lat, lng });
+                  if (!gps || locationSource === "manual") {
+                    setGps({ lat, lng, accuracy: 0 });
+                    setLocationSource("manual");
+                    setStatus(
+                      "Manual pin selected. Adjust it again or capture current GPS instead.",
+                    );
+                  }
+                }}
               />
             )}{" "}
             {pin && (

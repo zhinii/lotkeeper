@@ -882,7 +882,9 @@ export default function AdminConsole({
                         <dd>
                           {item.location_source === "photo_exif"
                             ? "Photo GPS"
-                            : "Browser GPS"}
+                            : item.location_source === "browser_gps"
+                              ? "Browser GPS"
+                              : "Manual pin"}
                         </dd>
                       </div>
                     </dl>

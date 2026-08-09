@@ -117,6 +117,14 @@ export default function AdminConsole({
         ? rows.find((row) => row.id === selected.id)
         : rows[0];
       setSelected(current || null);
+      if (current) {
+        setEditCenter({
+          latitude: current.latitude,
+          longitude: current.longitude,
+        });
+        setEditZoom(current.map_zoom);
+        setEditBoundary(current.boundary || []);
+      }
     } catch (e) {
       setMessage(e instanceof Error ? e.message : "Could not load instances.");
     }
@@ -253,8 +261,12 @@ export default function AdminConsole({
       setMessage(`${selected.name} settings updated.`);
       await loadInstances();
     } catch (e) {
+      const detail =
+        e instanceof Error ? e.message : "Could not update the instance.";
       setMessage(
-        e instanceof Error ? e.message : "Could not update the instance.",
+        detail.includes("boundary")
+          ? "Database upgrade required: run supabase/instance-boundary-upgrade.sql, reload, and save again."
+          : detail,
       );
     }
   }
@@ -407,7 +419,16 @@ export default function AdminConsole({
           {instances.map((instance) => (
             <button
               className={selected?.id === instance.id ? "active" : ""}
-              onClick={() => setSelected(instance)}
+              onClick={() => {
+                setSelected(instance);
+                setEditCenter({
+                  latitude: instance.latitude,
+                  longitude: instance.longitude,
+                });
+                setEditZoom(instance.map_zoom);
+                setEditBoundary(instance.boundary || []);
+                setEditDrawing(false);
+              }}
               key={instance.id}
             >
               <strong>{instance.name}</strong>

@@ -45,6 +45,12 @@ export default function AdminConsole({
   });
   const [mapZoom, setMapZoom] = useState(13);
   const [placeSearch, setPlaceSearch] = useState("");
+  const [boundaryPoints, setBoundaryPoints] = useState<[number, number][]>([]);
+  const [drawingBoundary, setDrawingBoundary] = useState(false);
+  const [editCenter, setEditCenter] = useState({ latitude: 0, longitude: 0 });
+  const [editZoom, setEditZoom] = useState(13);
+  const [editBoundary, setEditBoundary] = useState<[number, number][]>([]);
+  const [editDrawing, setEditDrawing] = useState(false);
   const [session, setSession] = useState<Session | null>(getSession());
   const [instances, setInstances] = useState<Instance[]>([]);
   const [selected, setSelected] = useState<Instance | null>(null);
@@ -135,6 +141,16 @@ export default function AdminConsole({
   useEffect(() => {
     if (selected) loadSubmissions(selected);
   }, [selected?.id]);
+  useEffect(() => {
+    if (!selected) return;
+    setEditCenter({
+      latitude: selected.latitude,
+      longitude: selected.longitude,
+    });
+    setEditZoom(selected.map_zoom);
+    setEditBoundary(selected.boundary || []);
+    setEditDrawing(false);
+  }, [selected?.id]);
   async function login(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
@@ -185,6 +201,7 @@ export default function AdminConsole({
           latitude: Number(form.get("latitude")),
           longitude: Number(form.get("longitude")),
           map_zoom: Number(form.get("zoom")),
+          boundary: boundaryPoints,
           created_by: session.user.id,
         },
       });
@@ -195,10 +212,50 @@ export default function AdminConsole({
       });
       setMessage(`${created.name} is configured and ready.`);
       event.currentTarget.reset();
+      setBoundaryPoints([]);
+      setDrawingBoundary(false);
       await loadInstances();
       setSelected(created);
     } catch (e) {
       setMessage(e instanceof Error ? e.message : "Could not create instance.");
+    }
+  }
+  async function saveSelected(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selected) return;
+    const form = new FormData(event.currentTarget);
+    const modules = moduleOptions
+      .filter(({ key }) => form.get(`edit-${key}`) === "on")
+      .map(({ key }) => key);
+    if (!modules.length)
+      return setMessage("Enable at least one feature module.");
+    try {
+      await db("instances", `id=eq.${selected.id}`, {
+        method: "PATCH",
+        prefer: "return=minimal",
+        body: {
+          site_name: String(form.get("edit-siteName") || selected.site_name),
+          access_mode: form.get("edit-accessMode"),
+          modules,
+          terminology: Object.fromEntries(
+            moduleOptions.map(({ key, title }) => [
+              key,
+              String(form.get(`edit-term-${key}`) || title),
+            ]),
+          ),
+          latitude: editCenter.latitude,
+          longitude: editCenter.longitude,
+          map_zoom: editZoom,
+          boundary: editBoundary,
+          updated_at: new Date().toISOString(),
+        },
+      });
+      setMessage(`${selected.name} settings updated.`);
+      await loadInstances();
+    } catch (e) {
+      setMessage(
+        e instanceof Error ? e.message : "Could not update the instance.",
+      );
     }
   }
   async function toggleAccess(instance: Instance) {
@@ -406,8 +463,163 @@ export default function AdminConsole({
                   </button>
                 </section>
               )}
+              {selected && (
+                <section className="deploy-panel edit-instance-panel">
+                  <h2>Edit selected instance</h2>
+                  <p className="section-help">
+                    Change the public/private setting, enabled categories,
+                    labels, map center, or site boundary at any time.
+                  </p>
+                  <form onSubmit={saveSelected} key={selected.id}>
+                    <div className="form-columns">
+                      <label>
+                        Site name
+                        <input
+                          name="edit-siteName"
+                          required
+                          defaultValue={selected.site_name}
+                        />
+                      </label>
+                      <label>
+                        Access
+                        <select
+                          name="edit-accessMode"
+                          defaultValue={selected.access_mode}
+                        >
+                          <option value="public">Public directory</option>
+                          <option value="private">Private, members only</option>
+                        </select>
+                      </label>
+                    </div>
+                    <h3>Enabled categories and labels</h3>
+                    <div className="module-options">
+                      {moduleOptions.map((option) => (
+                        <label key={option.key}>
+                          <input
+                            type="checkbox"
+                            name={`edit-${option.key}`}
+                            defaultChecked={selected.modules.includes(
+                              option.key,
+                            )}
+                          />
+                          <span>
+                            <b>{option.title}</b>
+                            <small>{option.description}</small>
+                          </span>
+                          <input
+                            name={`edit-term-${option.key}`}
+                            defaultValue={
+                              selected.terminology[option.key] || option.title
+                            }
+                            aria-label={`${option.title} label`}
+                          />
+                        </label>
+                      ))}
+                    </div>
+                    <h3>Map and site boundary</h3>
+                    <p className="section-help">
+                      Move the center pin normally. Select Draw boundary, then
+                      click points around the site in order. Three or more
+                      points create the shaded boundary.
+                    </p>
+                    <div className="boundary-actions">
+                      <button
+                        type="button"
+                        className={editDrawing ? "active" : ""}
+                        onClick={() => setEditDrawing((value) => !value)}
+                      >
+                        {editDrawing ? "Stop drawing" : "Draw boundary"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setEditBoundary((points) => points.slice(0, -1))
+                        }
+                        disabled={!editBoundary.length}
+                      >
+                        Undo point
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setEditBoundary([])}
+                        disabled={!editBoundary.length}
+                      >
+                        Clear boundary
+                      </button>
+                      <span>{editBoundary.length} boundary points</span>
+                    </div>
+                    <GeoMap
+                      latitude={editCenter.latitude}
+                      longitude={editCenter.longitude}
+                      zoom={editZoom}
+                      picker
+                      boundary={editBoundary}
+                      boundaryPicker={editDrawing}
+                      onBoundaryChange={setEditBoundary}
+                      onPick={(latitude, longitude) =>
+                        setEditCenter({ latitude, longitude })
+                      }
+                    />
+                    <div className="form-columns map-config">
+                      <label>
+                        Latitude
+                        <input
+                          type="number"
+                          step="any"
+                          value={editCenter.latitude}
+                          onChange={(event) =>
+                            setEditCenter((current) => ({
+                              ...current,
+                              latitude: Number(event.target.value),
+                            }))
+                          }
+                        />
+                      </label>
+                      <label>
+                        Longitude
+                        <input
+                          type="number"
+                          step="any"
+                          value={editCenter.longitude}
+                          onChange={(event) =>
+                            setEditCenter((current) => ({
+                              ...current,
+                              longitude: Number(event.target.value),
+                            }))
+                          }
+                        />
+                      </label>
+                      <label>
+                        Zoom
+                        <input
+                          type="number"
+                          min="3"
+                          max="22"
+                          value={editZoom}
+                          onChange={(event) =>
+                            setEditZoom(Number(event.target.value))
+                          }
+                        />
+                      </label>
+                    </div>
+                    <button className="deploy-button">
+                      Save instance settings
+                    </button>
+                  </form>
+                </section>
+              )}
               <section className="deploy-panel">
                 <h2>Create a new instance</h2>
+                <div className="deployment-note">
+                  <b>Shared public/free deployment</b>
+                  <p>
+                    This console creates an isolated instance in the shared
+                    Lotkeeper database. “Private” means authenticated access in
+                    that shared service. Customers requiring their own database
+                    use the dedicated deployment workflow maintained with this
+                    project.
+                  </p>
+                </div>
                 <form onSubmit={createInstance}>
                   <div className="form-columns">
                     <label>
@@ -439,7 +651,9 @@ export default function AdminConsole({
                       Access
                       <select name="accessMode">
                         <option value="public">Public directory</option>
-                        <option value="private">Private, members only</option>
+                        <option value="private">
+                          Private access, shared database
+                        </option>
                       </select>
                     </label>
                   </div>
@@ -468,6 +682,7 @@ export default function AdminConsole({
                   <p className="section-help">
                     Search for a city, use your current location, then click the
                     map or drag the yellow pin to select the deployment center.
+                    Optionally draw the site boundary before creating it.
                   </p>
                   <div className="map-search">
                     <input
@@ -483,11 +698,40 @@ export default function AdminConsole({
                       Use my location
                     </button>
                   </div>
+                  <div className="boundary-actions">
+                    <button
+                      type="button"
+                      className={drawingBoundary ? "active" : ""}
+                      onClick={() => setDrawingBoundary((value) => !value)}
+                    >
+                      {drawingBoundary ? "Stop drawing" : "Draw boundary"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setBoundaryPoints((points) => points.slice(0, -1))
+                      }
+                      disabled={!boundaryPoints.length}
+                    >
+                      Undo point
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setBoundaryPoints([])}
+                      disabled={!boundaryPoints.length}
+                    >
+                      Clear boundary
+                    </button>
+                    <span>{boundaryPoints.length} boundary points</span>
+                  </div>
                   <GeoMap
                     latitude={mapCenter.latitude}
                     longitude={mapCenter.longitude}
                     zoom={mapZoom}
                     picker
+                    boundary={boundaryPoints}
+                    boundaryPicker={drawingBoundary}
+                    onBoundaryChange={setBoundaryPoints}
                     onPick={(latitude, longitude) =>
                       setMapCenter({ latitude, longitude })
                     }

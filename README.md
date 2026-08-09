@@ -29,6 +29,8 @@ https://OWNER.github.io/REPOSITORY/#/admin
 
 This avoids maintaining a separate code copy for every customer. Each instance stores its own name, slug, site name, public/private access, enabled modules, labels, and initial map position.
 
+Public examples use the shared database with row-level separation. Paid or contractually private customers can receive a dedicated Supabase project and deployment. See [`docs/deployment-models.md`](docs/deployment-models.md) for the retained provisioning and closure process.
+
 ## One-time Supabase setup
 
 This repository is configured to use the existing Page Steel Supabase project through its public publishable key. No service-role secret belongs in this repository.
@@ -41,6 +43,8 @@ This repository is configured to use the existing Page Steel Supabase project th
 6. Create the first organization instance.
 
 The SQL creates tables, indexes, storage buckets, and row-level security policies. Public users may only read public instances and approved records. Submission contact information and pending photographs are restricted to instance administrators.
+
+Existing Lotkeeper databases created before boundary drawing was introduced can run the smaller additive upgrade at `supabase/instance-boundary-upgrade.sql` instead of repeating the complete schema.
 
 ## Local use with PowerShell
 

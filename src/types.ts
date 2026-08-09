@@ -11,6 +11,7 @@ export type Instance = {
   latitude: number;
   longitude: number;
   map_zoom: number;
+  boundary: [number, number][];
   created_by: string;
   created_at: string;
 };
@@ -55,4 +56,8 @@ export type Submission = {
   submitted_at: string;
 };
 
-export type Session = { access_token: string; refresh_token: string; user: { id: string; email: string } };
+export type Session = {
+  access_token: string;
+  refresh_token: string;
+  user: { id: string; email: string };
+};

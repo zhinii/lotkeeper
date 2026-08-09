@@ -14,10 +14,14 @@ create table if not exists public.instances (
   latitude double precision not null,
   longitude double precision not null,
   map_zoom integer not null default 17 check (map_zoom between 3 and 22),
+  boundary jsonb not null default '[]'::jsonb,
   created_by uuid not null references auth.users(id),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+-- Safe upgrade for projects that installed an earlier Lotkeeper schema.
+alter table public.instances add column if not exists boundary jsonb not null default '[]'::jsonb;
 
 create table if not exists public.instance_members (
   instance_id uuid not null references public.instances(id) on delete cascade,

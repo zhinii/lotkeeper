@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { siteConfig } from "./site-config";
 
 const inventory = [
   { id: "ST-1048", name: "1968 Ford Mustang Fastback", type: "Vehicles", zone: "Row C · Bay 12", price: "$18,500", status: "Available", note: "Complete body · project condition", x: 76, y: 26, tone: "amber" },
@@ -24,15 +25,15 @@ export default function Home() {
   return (
     <main>
       <header className="topbar">
-        <a className="brand" href="#top" aria-label="Lotkeeper home"><span className="brand-mark">LK</span><span>LOTKEEPER</span></a>
-        <nav aria-label="Main navigation"><a className="active" href="#directory">Explore inventory</a><a href="#how">How it works</a><a href="#contact">Contact yard</a></nav>
+        <a className="brand" href="#top" aria-label="Lotkeeper home"><span className="brand-mark">LK</span><span>{siteConfig.organizationName.toUpperCase()}</span></a>
+        <nav aria-label="Main navigation"><a className="active" href="#directory">Explore site</a><a href="/community">Community map</a><a href="/contribute">Add something</a></nav>
         <a className="staff-button" href="/admin"><span>Staff sign in</span><b>↗</b></a>
       </header>
 
       <section className="hero" id="top">
         <div className="eyebrow"><span /> PUBLIC YARD DIRECTORY</div>
         <h1>Find what’s here.<br/><em>Know exactly where.</em></h1>
-        <p>Search inventory, attractions, food, and events across the entire property—before you make the trip.</p>
+        <p>Search mapped places, assets, stock, loose material, attractions, and services across the entire property.</p>
         <label className="search"><span>⌕</span><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search a part, vehicle, attraction, or location…"/><kbd>⌘ K</kbd></label>
         <div className="quick-stats"><span><b>1,284</b> listed items</span><span><b>18</b> mapped zones</span><span className="open-dot"><b>Open today</b> until 6 PM</span></div>
       </section>
@@ -66,7 +67,7 @@ export default function Home() {
       </section>
 
       <section className="how" id="how"><div className="eyebrow"><span/> BUILT FOR REAL-WORLD PLACES</div><h2>One map. Any kind of yard.</h2><div className="use-cases"><article><b>01</b><h3>Salvage & parts</h3><p>Track vehicles, components, weights, prices, and exact rack or row locations.</p></article><article><b>02</b><h3>Dealer lots</h3><p>Give staff and shoppers a live, searchable view of every vehicle on the property.</p></article><article><b>03</b><h3>Parks & venues</h3><p>Help guests discover attractions, food, facilities, events, and accessibility details.</p></article></div></section>
-      <footer id="contact"><div className="brand"><span className="brand-mark">LK</span><span>LOTKEEPER</span></div><p>A secure location-aware inventory template for places with a lot to keep track of.</p><a href="/admin">Open staff workspace →</a></footer>
+      <footer id="contact"><div className="brand"><span className="brand-mark">LK</span><span>{siteConfig.organizationName.toUpperCase()}</span></div><p>A location-aware directory strengthened by staff and approved public contributions.</p><a href="/contribute">Add something →</a><a href="/admin">Staff workspace →</a></footer>
     </main>
   );
 }

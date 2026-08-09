@@ -1,100 +1,43 @@
-# vinext-starter
+# Lotkeeper Site Template
 
-A clean full-stack starter running on
-[vinext](https://github.com/cloudflare/vinext), with optional Cloudflare D1 and
-Drizzle support.
+Lotkeeper is a configurable, location-aware directory and operations template for large physical sites. It can be deployed separately for yards, vehicle lots, warehouses, stores, parks, venues, attractions, or other organizations.
 
-## Prerequisites
+## Current record model
 
-- Node.js `>=22.13.0`
+- **Places:** trails, attractions, facilities, departments, viewpoints, and other persistent destinations.
+- **Assets:** vehicles, machines, tools, rental equipment, and other individually managed items.
+- **Stock:** consumable or sellable material with quantities and units.
+- **Loose material:** scrap, offcuts, salvage, temporary piles, or informally managed items.
 
-## Quick Start
+The organization name, site name, and initial map position are configured through the deployment environment. Copy `.env.example` to `.env.local` for local customization.
 
-```bash
+## Public contribution workflow
+
+Public visitors do not need accounts. They can:
+
+1. Add or update a mapped place, asset, stock location, or loose material record.
+2. Report stock or consumable material that was used or removed.
+3. Take or choose a current photograph in the browser.
+4. Grant high-accuracy GPS access and move the pin to the exact location.
+5. Provide a name plus phone, email, or assigned user name for staff follow-up.
+
+Every submission is private and `pending` by default. Contributor contact information is staff-only. A signed-in administrator can review the photo, GPS accuracy, map pin, details, and contact information, then approve or reject it. Approval publishes new mapped records. Stock-change reports remain reviewed operational notices and do not silently change authoritative quantities.
+
+## Storage and security
+
+- Cloudflare D1 stores structured records and moderation history.
+- R2 stores uploaded photographs.
+- The staff workspace uses managed Sign in with ChatGPT.
+- Public API responses never include contributor contact information.
+- Public submissions are size- and type-validated and include a honeypot field. Production deployments should also configure platform rate limiting and an administrator allowlist.
+
+## Local development
+
+```powershell
 npm install
 npm run dev
 npm run build
+npm test
 ```
 
-This starter does not use `wrangler.jsonc`.
-
-## Included Shape
-
-- edit site code under `app/`
-- `.openai/hosting.json` declares optional Sites D1 and R2 bindings
-- `vite.config.ts` simulates declared bindings for local development
-- `db/schema.ts` starts intentionally empty
-- `examples/d1/` contains an optional D1 example surface
-- `drizzle.config.ts` supports local migration generation when needed
-
-## Workspace Auth Headers
-
-Signed-in visitors receive both `oai-authenticated-user-id` and `oai-authenticated-user-email`. Private Sites require every visitor to sign in; public Sites may also have anonymous visitors, for whom neither header is present.
-
-The user ID is stable for the same user on the same Site and different across Sites. Email and name are intended for display or contact purposes.
-
-SIWC-authenticated workspace sites may also receive
-`oai-authenticated-user-full-name` when the user's SIWC profile has a non-empty
-`name` claim. The full-name value is percent-encoded UTF-8 and is accompanied by
-`oai-authenticated-user-full-name-encoding: percent-encoded-utf-8`.
-
-Treat the full name as optional and fall back to email when it is absent:
-
-```tsx
-import { headers } from "next/headers";
-
-export default async function Home() {
-  const requestHeaders = await headers();
-  const userId = requestHeaders.get("oai-authenticated-user-id");
-  const email = requestHeaders.get("oai-authenticated-user-email");
-  const encodedFullName = requestHeaders.get("oai-authenticated-user-full-name");
-  const fullName =
-    encodedFullName &&
-    requestHeaders.get("oai-authenticated-user-full-name-encoding") ===
-      "percent-encoded-utf-8"
-      ? decodeURIComponent(encodedFullName)
-      : null;
-
-  const displayName = fullName ?? email;
-  // ...
-}
-```
-
-## Optional Dispatch-Owned ChatGPT Sign-In
-
-Import the ready-to-use helpers from `app/chatgpt-auth.ts` when the site needs
-optional or required ChatGPT sign-in:
-
-- Use `getChatGPTUser()` for optional signed-in UI.
-- Use `requireChatGPTUser(returnTo)` for server-rendered pages that should send
-  anonymous visitors through Sign in with ChatGPT.
-- Use `chatGPTSignInPath(returnTo)` and `chatGPTSignOutPath(returnTo)` for
-  browser links or actions.
-- Pass a same-origin relative `returnTo` path for the destination after sign-in
-  or sign-out. The helper validates and safely encodes it.
-- Mark protected pages with `export const dynamic = "force-dynamic"` because
-  they depend on per-request identity headers.
-
-Dispatch owns `/signin-with-chatgpt`, `/signout-with-chatgpt`, `/callback`, the
-OAuth cookies, and identity header injection. Do not implement app routes for
-those reserved paths. Routes that do not import and call the helper remain
-anonymous-compatible.
-
-SIWC establishes identity only; it does not prove workspace membership. Use the
-Sites hosting platform's access policy controls for workspace-wide restrictions,
-or enforce explicit server-side membership or allowlist checks.
-
-Use SIWC for account pages, user-specific dashboards, saved records, and write
-actions tied to the current ChatGPT user. Leave public content anonymous.
-
-## Useful Commands
-
-- `npm run dev`: start local development
-- `npm run build`: verify the vinext build output
-- `npm test`: build the starter and verify its rendered loading skeleton
-- `npm run db:generate`: generate Drizzle migrations after schema changes
-
-## Learn More
-
-- [vinext Documentation](https://github.com/cloudflare/vinext)
-- [Drizzle D1 Guide](https://orm.drizzle.team/docs/get-started/d1-new)
+Database migrations are stored under `drizzle/`. The current deployment declares logical `DB` and `MEDIA` bindings in `.openai/hosting.json`.

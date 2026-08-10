@@ -63,7 +63,10 @@ test("Material Pin logs public searches and accountable inventory use", async ()
   assert.match(directory, /log_material_search/);
   assert.match(directory, /search_mode: true/);
   assert.match(directory, /record_inventory_use/);
-  assert.match(schema, /create or replace function public\.log_material_search/);
+  assert.match(
+    schema,
+    /create or replace function public\.log_material_search/,
+  );
   assert.match(schema, /Inventory used:/);
 });
 
@@ -143,6 +146,23 @@ test("manager console uses plain-language tasks and hides advanced setup", async
   assert.match(map, /Exact map values/);
 });
 
+test("organization admins can manage employee access and owners can delete deployments", async () => {
+  const admin = await read("src/pages/AdminPage.tsx");
+  const staff = await read("src/pages/StaffPage.tsx");
+  const manager = await read("supabase/functions/manage-organization/index.ts");
+  assert.match(admin, /Employees and administrators/);
+  assert.match(admin, /Create or assign login/);
+  assert.match(admin, /Delete this organization/);
+  assert.match(admin, /No database work is required/);
+  assert.match(staff, /Change my password/);
+  assert.match(manager, /action === "create_employee"/);
+  assert.match(manager, /action === "remove_member"/);
+  assert.match(manager, /action === "delete_organization"/);
+  assert.match(manager, /organization owner or platform administrator/);
+  assert.match(manager, /storage[\s\S]*submission-media/);
+  assert.match(manager, /storage[\s\S]*public-records/);
+});
+
 test("employee photo review uses consistent inventory fields and visibility", async () => {
   const submit = await read("src/pages/SubmitPage.tsx");
   const captureFields = await read("src/lib/captureFields.ts");
@@ -176,7 +196,8 @@ test("submitters review AI and EXIF values before a locked confirmation", async 
   assert.match(submit, /setStep\("review"\)/);
   assert.match(submit, /image_data_url/);
   assert.ok(
-    submit.indexOf("image_data_url") < submit.indexOf('.from("submissions").insert'),
+    submit.indexOf("image_data_url") <
+      submit.indexOf('.from("submissions").insert'),
     "AI preview should happen before the final submission insert",
   );
   assert.match(edge, /Photo-first preview/);

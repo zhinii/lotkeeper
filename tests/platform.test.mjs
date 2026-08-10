@@ -228,9 +228,12 @@ test("submitters review AI and EXIF values before a locked confirmation", async 
   assert.match(cropper, /Pinch with two fingers to zoom/);
   assert.match(cropper, /touchZoom|distance \/ gesture\.current\.distance/);
   assert.match(cropper, /createImageBitmap cannot decode/);
+  assert.match(cropper, /drawable\.current/);
+  assert.match(cropper, /context\.drawImage/);
   assert.match(cropper, /This photo cannot be opened/);
   assert.match(submit, /disabled=\{preparing \|\| !cropReady\}/);
   assert.match(submit, /normalizeCollections/);
+  assert.match(submit, /safeWarnings/);
   const cropStart = submit.indexOf("async function confirmCrop");
   const cropCall = submit.indexOf("await cropPhoto", cropStart);
   const aiCall = submit.indexOf("await analyzeSelectedPhoto", cropCall);
@@ -261,10 +264,11 @@ test("Material Pin is installable while retaining the GitHub Pages website", asy
   assert.match(main, /AppErrorBoundary/);
   assert.match(boundary, /This screen could not open/);
   assert.match(boundary, /Your photo was not submitted/);
+  assert.match(boundary, /app-error-detail/);
   assert.match(manifest, /"display": "standalone"/);
   assert.match(manifest, /"name": "Material Pin"/);
   assert.match(manifest, /icon-192\.png/);
   assert.match(manifest, /icon-512\.png/);
-  assert.match(worker, /material-pin-shell-v4/);
+  assert.match(worker, /material-pin-shell-v5/);
   assert.match(worker, /request\.mode === "navigate"/);
 });

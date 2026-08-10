@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type {
   PointerEvent as ReactPointerEvent,
   WheelEvent as ReactWheelEvent,
@@ -122,10 +122,11 @@ export default function PhotoCropper({
   onReadyChange: (ready: boolean) => void;
 }) {
   const canvas = useRef<HTMLCanvasElement>(null);
-  const image = useRef<HTMLImageElement>(null);
+  const drawable = useRef<Awaited<ReturnType<typeof loadDrawableImage>> | null>(
+    null,
+  );
   const [loaded, setLoaded] = useState(false);
   const [loadError, setLoadError] = useState(false);
-  const imageUrl = useMemo(() => URL.createObjectURL(file), [file]);
   const cropRef = useRef(crop);
   const pointers = useRef(new Map<number, { x: number; y: number }>());
   const gesture = useRef<
@@ -246,38 +247,57 @@ export default function PhotoCropper({
     });
   }
 
-  useEffect(() => () => URL.revokeObjectURL(imageUrl), [imageUrl]);
   useEffect(() => {
+    let active = true;
     setLoaded(false);
     setLoadError(false);
     onReadyChange(false);
-  }, [imageUrl, onReadyChange]);
+    loadDrawableImage(file)
+      .then((next) => {
+        if (!active) return next.close();
+        drawable.current?.close();
+        drawable.current = next;
+        setLoaded(true);
+        onReadyChange(true);
+      })
+      .catch(() => {
+        if (!active) return;
+        setLoadError(true);
+        onReadyChange(false);
+      });
+    return () => {
+      active = false;
+      drawable.current?.close();
+      drawable.current = null;
+    };
+  }, [file, onReadyChange]);
 
   useEffect(() => {
-    const element = image.current;
+    const sourceImage = drawable.current;
     const target = canvas.current;
-    if (!loaded || !element || !target) return;
-    const source = sourceRectangle(
-      element.naturalWidth,
-      element.naturalHeight,
-      crop,
-    );
+    if (!loaded || !sourceImage || !target) return;
+    const source = sourceRectangle(sourceImage.width, sourceImage.height, crop);
     if (target.width !== 960) target.width = 960;
     if (target.height !== 720) target.height = 720;
     const context = target.getContext("2d");
     if (!context) return;
-    context.drawImage(
-      element,
-      source.x,
-      source.y,
-      source.width,
-      source.height,
-      0,
-      0,
-      target.width,
-      target.height,
-    );
-  }, [crop, loaded]);
+    try {
+      context.drawImage(
+        sourceImage.image,
+        source.x,
+        source.y,
+        source.width,
+        source.height,
+        0,
+        0,
+        target.width,
+        target.height,
+      );
+    } catch {
+      setLoadError(true);
+      onReadyChange(false);
+    }
+  }, [crop, loaded, onReadyChange]);
 
   return (
     <div className="photo-cropper">
@@ -289,19 +309,6 @@ export default function PhotoCropper({
         onPointerCancel={handlePointerEnd}
         onWheel={handleWheel}
       >
-        <img
-          ref={image}
-          src={imageUrl}
-          alt=""
-          onLoad={() => {
-            setLoaded(true);
-            onReadyChange(true);
-          }}
-          onError={() => {
-            setLoadError(true);
-            onReadyChange(false);
-          }}
-        />
         <canvas ref={canvas} aria-label="Cropped photo preview" />
         {loadError ? (
           <div className="crop-load-error" role="alert">

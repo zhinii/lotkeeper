@@ -292,22 +292,40 @@ export default function SubmitPage({
     collections.find((item) => item.id === collectionId) || null;
 
   function applySuggestions(suggestions: Submission["ai_suggestions"]) {
-    setAiSuggestions(suggestions);
-    if (suggestions.collection_id) {
+    const safeKeywords = Array.isArray(suggestions.keywords)
+      ? suggestions.keywords
+      : [];
+    const safeFields = Array.isArray(suggestions.fields)
+      ? suggestions.fields
+      : [];
+    const safeWarnings = Array.isArray(suggestions.warnings)
+      ? suggestions.warnings
+      : [];
+    const safeSuggestions: Submission["ai_suggestions"] = {
+      ...suggestions,
+      keywords: safeKeywords,
+      fields: safeFields,
+      warnings: safeWarnings,
+    };
+    setAiSuggestions(safeSuggestions);
+    if (safeSuggestions.collection_id) {
       const suggestedCollection = collections.find(
-        (item) => item.id === suggestions.collection_id,
+        (item) => item.id === safeSuggestions.collection_id,
       );
       if (suggestedCollection) setCollectionId(suggestedCollection.id);
     }
-    if (suggestions.name) setName(suggestions.name);
-    if (suggestions.description) setDescription(suggestions.description);
-    if (suggestions.category) setCategory(suggestions.category);
-    if (suggestions.quantity && Number.isFinite(Number(suggestions.quantity)))
-      setQuantity(suggestions.quantity);
-    if (suggestions.unit) setUnit(suggestions.unit);
-    if (suggestions.keywords?.length)
-      setKeywords(suggestions.keywords.join(", "));
-    for (const field of suggestions.fields || []) {
+    if (safeSuggestions.name) setName(safeSuggestions.name);
+    if (safeSuggestions.description)
+      setDescription(safeSuggestions.description);
+    if (safeSuggestions.category) setCategory(safeSuggestions.category);
+    if (
+      safeSuggestions.quantity &&
+      Number.isFinite(Number(safeSuggestions.quantity))
+    )
+      setQuantity(safeSuggestions.quantity);
+    if (safeSuggestions.unit) setUnit(safeSuggestions.unit);
+    if (safeKeywords.length) setKeywords(safeKeywords.join(", "));
+    for (const field of safeFields) {
       if (commercialCaptureKeys.has(field.key as CommercialCaptureKey)) {
         setCommercialData((current) => ({
           ...current,

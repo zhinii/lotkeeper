@@ -62,7 +62,9 @@ export default function OrganizationMapEditor({
             <b>Boundary drawing is active.</b>{" "}
             {value.boundary.length
               ? `${value.boundary.length} point${value.boundary.length === 1 ? "" : "s"} placed. Add at least 3 points to form an area.`
-              : "Tap each corner of the area on the map."}
+              : "Tap each corner of the area on the map."}{" "}
+            The map is locked while drawing. Choose Move center to reposition
+            it.
           </>
         ) : (
           <>

@@ -119,6 +119,22 @@ export default function MapView({
   }, []);
 
   useEffect(() => {
+    const instance = map.current;
+    if (!instance) return;
+    const movementControls = [
+      instance.dragPan,
+      instance.scrollZoom,
+      instance.boxZoom,
+      instance.doubleClickZoom,
+      instance.touchZoomRotate,
+      instance.keyboard,
+    ];
+    movementControls.forEach((control) =>
+      boundaryEditor ? control?.disable() : control?.enable(),
+    );
+  }, [boundaryEditor]);
+
+  useEffect(() => {
     if (map.current) {
       const center = map.current.getCenter();
       if (

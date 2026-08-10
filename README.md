@@ -26,6 +26,29 @@ Lotkeeper is a mobile-first visual location and inventory finder for civic and c
 
 Page Steel remains a separate archived application and database. Lotkeeper deployments share the dedicated Lotkeeper database by default and are isolated by `organization_id` plus row-level security. A private paid deployment can instead use its own Supabase project with the same schema.
 
+## Private organization users
+
+The current release does not yet include a no-code invitation screen. Create or
+invite the person under **Supabase → Authentication → Users**, then assign that
+authenticated user to the private organization in the SQL Editor:
+
+```sql
+insert into public.organization_members (organization_id, user_id, role)
+select organization.id, person.id, 'member'
+from public.organizations organization
+cross join auth.users person
+where organization.slug = 'your-organization-slug'
+  and lower(person.email) = lower('person@example.com')
+on conflict (organization_id, user_id)
+do update set role = excluded.role;
+```
+
+Use `member` for ordinary private-site access. Use `admin` only for someone who
+should review submissions and change the organization. The person signs in from
+the Lotkeeper manager login, then opens the private organization. A future
+release should replace this temporary database-assisted process with a simple
+People & Access screen.
+
 ## Local setup
 
 1. Install dependencies with `pnpm install`.

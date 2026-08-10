@@ -4,6 +4,7 @@ import MapView from "../components/MapView";
 import OrganizationMapEditor, {
   type MapConfiguration,
 } from "../components/OrganizationMapEditor";
+import { captureFieldLabel } from "../lib/captureFields";
 import { civicDefaults, commercialDefaults } from "../lib/collections";
 import { navigate } from "../lib/route";
 import { requireSupabase } from "../lib/supabase";
@@ -142,25 +143,41 @@ export default function AdminPage() {
   }
   async function loadWorkspace(organizationId: string) {
     const client = requireSupabase();
-    const [submissionRows, recordRows, alertRows] = await Promise.all([
-      client
-        .from("submissions")
-        .select("*")
-        .eq("organization_id", organizationId)
-        .order("submitted_at", { ascending: false }),
-      client
-        .from("records")
-        .select("*")
-        .eq("organization_id", organizationId)
-        .order("updated_at", { ascending: false }),
-      client
-        .from("alerts")
-        .select("*")
-        .eq("organization_id", organizationId)
-        .order("created_at", { ascending: false }),
-    ]);
+    const [submissionRows, recordRows, privateRows, alertRows] =
+      await Promise.all([
+        client
+          .from("submissions")
+          .select("*")
+          .eq("organization_id", organizationId)
+          .order("submitted_at", { ascending: false }),
+        client
+          .from("records")
+          .select("*")
+          .eq("organization_id", organizationId)
+          .order("updated_at", { ascending: false }),
+        client
+          .from("record_private_data")
+          .select("record_id,data")
+          .eq("organization_id", organizationId),
+        client
+          .from("alerts")
+          .select("*")
+          .eq("organization_id", organizationId)
+          .order("created_at", { ascending: false }),
+      ]);
     setSubmissions((submissionRows.data || []) as Submission[]);
-    setRecords((recordRows.data || []) as RecordItem[]);
+    const privateByRecord = new Map(
+      (privateRows.data || []).map((row) => [
+        row.record_id,
+        row.data as Record<string, unknown>,
+      ]),
+    );
+    setRecords(
+      ((recordRows.data || []) as RecordItem[]).map((record) => ({
+        ...record,
+        data: { ...record.data, ...(privateByRecord.get(record.id) || {}) },
+      })),
+    );
     setAlerts((alertRows.data || []) as AlertItem[]);
     const photoEntries = await Promise.all(
       ((submissionRows.data || []) as Submission[])
@@ -676,6 +693,29 @@ export default function AdminPage() {
                       <dt>Photo suggestions</dt>
                       <dd>{aiStatusLabel(item.ai_status)}</dd>
                     </div>
+                    <div>
+                      <dt>Quantity</dt>
+                      <dd>
+                        {item.proposed.quantity ?? "Not provided"}{" "}
+                        {item.proposed.unit || ""}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>Date of capture</dt>
+                      <dd>
+                        {item.photo_taken_at
+                          ? new Date(item.photo_taken_at).toLocaleString()
+                          : "Not provided"}
+                      </dd>
+                    </div>
+                    {Object.entries(item.proposed.data || {})
+                      .filter(([, value]) => value !== "" && value != null)
+                      .map(([key, value]) => (
+                        <div key={key}>
+                          <dt>{captureFieldLabel(key)}</dt>
+                          <dd>{String(value)}</dd>
+                        </div>
+                      ))}
                   </dl>
                   <div className="moderation-actions">
                     {item.status === "pending" ? (
@@ -739,6 +779,9 @@ export default function AdminPage() {
                     </small>
                     <b>{item.name}</b>
                     <p>{item.description}</p>
+                    {item.data.sku != null && item.data.sku !== "" && (
+                      <small>SKU # / asset ID: {String(item.data.sku)}</small>
+                    )}
                   </div>
                   <span>
                     {item.quantity !== null

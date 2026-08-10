@@ -1,6 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { gps as readGps, parse as readExif } from "exifr";
 import MapView from "../components/MapView";
+import {
+  commercialCaptureFields,
+  commercialCaptureKeys,
+  emptyCommercialCaptureData,
+  type CommercialCaptureKey,
+} from "../lib/captureFields";
 import { navigate } from "../lib/route";
 import { publicPhoto, requireSupabase } from "../lib/supabase";
 import type {
@@ -17,6 +23,14 @@ type Point = {
   source: LocationSource;
 };
 
+function localDateTime(isoDate: string | null) {
+  if (!isoDate) return "";
+  const date = new Date(isoDate);
+  if (Number.isNaN(date.getTime())) return "";
+  const offset = date.getTimezoneOffset() * 60_000;
+  return new Date(date.getTime() - offset).toISOString().slice(0, 16);
+}
+
 export default function SubmitPage({
   slug,
   recordId,
@@ -29,8 +43,11 @@ export default function SubmitPage({
   const [collectionId, setCollectionId] = useState("");
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
-  const [quantity, setQuantity] = useState("");
+  const [quantity, setQuantity] = useState("1");
   const [unit, setUnit] = useState("");
+  const [commercialData, setCommercialData] = useState(() =>
+    emptyCommercialCaptureData(),
+  );
   const [photo, setPhoto] = useState<File | null>(null);
   const [preview, setPreview] = useState("");
   const [photoTakenAt, setPhotoTakenAt] = useState<string | null>(null);
@@ -60,13 +77,36 @@ export default function SubmitPage({
           .eq("id", recordId)
           .single();
         if (data) {
-          const item = data as RecordItem;
+          const { data: privateRow } = await client
+            .from("record_private_data")
+            .select("data")
+            .eq("record_id", recordId)
+            .maybeSingle();
+          const item = {
+            ...(data as RecordItem),
+            data: {
+              ...(data as RecordItem).data,
+              ...((privateRow?.data as Record<string, unknown>) || {}),
+            },
+          };
           setTarget(item);
           setCollectionId(item.collection_id);
           setName(item.name);
           setDescription(item.description);
-          setQuantity(item.quantity === null ? "" : String(item.quantity));
+          setQuantity(item.quantity === null ? "1" : String(item.quantity));
           setUnit(item.unit || "");
+          setPhotoTakenAt(item.photo_taken_at);
+          setCommercialData(
+            (current) =>
+              Object.fromEntries(
+                commercialCaptureFields.map((field) => [
+                  field.key,
+                  item.data[field.key] == null
+                    ? current[field.key]
+                    : String(item.data[field.key]),
+                ]),
+              ) as Record<CommercialCaptureKey, string>,
+          );
           setPoint({
             lat: item.latitude,
             lng: item.longitude,
@@ -104,8 +144,14 @@ export default function SubmitPage({
       readExif(file, ["DateTimeOriginal", "CreateDate"]).catch(() => null),
     ]);
     const captured = metadata?.DateTimeOriginal || metadata?.CreateDate;
-    if (captured instanceof Date && !Number.isNaN(captured.getTime()))
-      setPhotoTakenAt(captured.toISOString());
+    const fileDate = new Date(file.lastModified);
+    setPhotoTakenAt(
+      captured instanceof Date && !Number.isNaN(captured.getTime())
+        ? captured.toISOString()
+        : file.lastModified > 0 && !Number.isNaN(fileDate.getTime())
+          ? fileDate.toISOString()
+          : new Date().toISOString(),
+    );
     if (coordinates?.latitude != null && coordinates?.longitude != null) {
       setPoint({
         lat: coordinates.latitude,
@@ -165,24 +211,27 @@ export default function SubmitPage({
           .upload(photoPath, photo, { contentType: photo.type, upsert: false });
         if (error) throw error;
       }
-      const data = Object.fromEntries(
+      const configurableData = Object.fromEntries(
         collection.fields
           .filter(
-            (field) => field.publicSubmit || organization.mode === "commercial",
+            (field) =>
+              (field.publicSubmit || organization.mode === "commercial") &&
+              !commercialCaptureKeys.has(field.key),
           )
           .map((field) => [field.key, form.get(`field-${field.key}`)]),
       );
+      const data = {
+        ...configurableData,
+        ...(organization.mode === "commercial" ? commercialData : {}),
+      };
       const { data: user } = await client.auth.getUser();
       const proposed = {
         name: name.trim(),
         description: description.trim(),
         data,
         collection_id: collection.id,
-        quantity:
-          collection.kind === "consumable" && quantity !== ""
-            ? Number(quantity)
-            : null,
-        unit: collection.kind === "consumable" ? unit.trim() || null : null,
+        quantity: quantity !== "" ? Number(quantity) : null,
+        unit: organization.mode === "commercial" ? unit.trim() || null : null,
         latitude: point.lat,
         longitude: point.lng,
         location_source: point.source,
@@ -278,7 +327,7 @@ export default function SubmitPage({
               </select>
             </label>
             <label>
-              Name
+              Item name
               <input
                 value={name}
                 onChange={(event) => setName(event.target.value)}
@@ -296,34 +345,71 @@ export default function SubmitPage({
                 maxLength={2000}
               />
             </label>
-            {collection?.kind === "consumable" && (
-              <div className="field-pair">
-                <label>
-                  Current quantity
-                  <input
-                    value={quantity}
-                    onChange={(event) => setQuantity(event.target.value)}
-                    type="number"
-                    min="0"
-                    step="any"
-                    required
-                  />
-                </label>
-                <label>
-                  Unit
-                  <input
-                    value={unit}
-                    onChange={(event) => setUnit(event.target.value)}
-                    placeholder="pieces, feet, cases"
-                    required
-                  />
-                </label>
-              </div>
+            {organization.mode === "civic" && (
+              <label>
+                Quantity
+                <input
+                  value={quantity}
+                  onChange={(event) => setQuantity(event.target.value)}
+                  type="number"
+                  min="0"
+                  step="any"
+                  required
+                />
+              </label>
+            )}
+            {organization.mode === "commercial" && (
+              <fieldset className="inventory-capture-fields">
+                <legend>Inventory details</legend>
+                <p>
+                  These identify the item. Quantity can be updated later without
+                  taking another photo.
+                </p>
+                {commercialCaptureFields.map((field) => (
+                  <label key={field.key}>
+                    {field.label}
+                    <input
+                      value={commercialData[field.key]}
+                      onChange={(event) =>
+                        setCommercialData((current) => ({
+                          ...current,
+                          [field.key]: event.target.value,
+                        }))
+                      }
+                      placeholder={field.placeholder}
+                      required={field.required}
+                    />
+                  </label>
+                ))}
+                <div className="field-pair">
+                  <label>
+                    Current quantity
+                    <input
+                      value={quantity}
+                      onChange={(event) => setQuantity(event.target.value)}
+                      type="number"
+                      min="0"
+                      step="any"
+                      required
+                    />
+                  </label>
+                  <label>
+                    Unit
+                    <input
+                      value={unit}
+                      onChange={(event) => setUnit(event.target.value)}
+                      placeholder="pieces, feet, cases"
+                      required
+                    />
+                  </label>
+                </div>
+              </fieldset>
             )}
             {collection?.fields
               .filter(
                 (field) =>
-                  field.publicSubmit || organization.mode === "commercial",
+                  (field.publicSubmit || organization.mode === "commercial") &&
+                  !commercialCaptureKeys.has(field.key),
               )
               .map((field) => (
                 <label key={field.key}>
@@ -376,6 +462,25 @@ export default function SubmitPage({
                 </span>
               </div>
             )}
+            <label className="capture-date-field">
+              Date of capture
+              <input
+                type="datetime-local"
+                value={localDateTime(photoTakenAt)}
+                onChange={(event) =>
+                  setPhotoTakenAt(
+                    event.target.value
+                      ? new Date(event.target.value).toISOString()
+                      : null,
+                  )
+                }
+                required={!recordId || Boolean(photo)}
+              />
+              <small>
+                Filled from the photo when available. Adjust it if the date is
+                incorrect.
+              </small>
+            </label>
           </section>
           <section>
             <h2>
@@ -401,11 +506,14 @@ export default function SubmitPage({
                 setPoint({ lat, lng, accuracy: null, source: "manual_pin" })
               }
             />
-            <code>
-              {point
-                ? `${point.lat.toFixed(6)}, ${point.lng.toFixed(6)}`
-                : "Location required"}
-            </code>
+            <div className="coordinate-readout">
+              <span>GPS coordinates</span>
+              <code>
+                {point
+                  ? `${point.lat.toFixed(6)}, ${point.lng.toFixed(6)}`
+                  : "Location required"}
+              </code>
+            </div>
           </section>
           <section className="submit-action">
             <h2>

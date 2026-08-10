@@ -129,3 +129,22 @@ test("manager console uses plain-language tasks and hides advanced setup", async
   assert.match(collections, /Let visitors suggest new entries/);
   assert.match(map, /Exact map values/);
 });
+
+test("capture forms use consistent civic and commercial inventory fields", async () => {
+  const submit = await read("src/pages/SubmitPage.tsx");
+  const captureFields = await read("src/lib/captureFields.ts");
+  const collections = await read("src/components/CollectionEditor.tsx");
+  assert.match(submit, /Item name/);
+  assert.match(submit, /Date of capture/);
+  assert.match(submit, /GPS coordinates/);
+  assert.match(submit, /organization\.mode === "civic"/);
+  assert.match(submit, /Quantity/);
+  assert.match(submit, /quantity: quantity !== ""/);
+  assert.match(captureFields, /SKU # \/ asset ID/);
+  assert.match(captureFields, /Storage location \/ bin/);
+  assert.match(captureFields, /Condition/);
+  assert.match(captureFields, /Manufacturer \/ brand/);
+  assert.match(captureFields, /Lot \/ serial number/);
+  assert.match(collections, /included\s+automatically/);
+  assert.match(submit, /without\s+.*another photo/s);
+});

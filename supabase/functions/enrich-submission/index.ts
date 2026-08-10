@@ -15,6 +15,7 @@ type Enrichment = {
   description: string;
   category: string;
   quantity: string;
+  unit: string;
   keywords: string[];
   search_terms: string[];
   fields: SuggestedField[];
@@ -29,11 +30,21 @@ type OrganizationContext = {
   collections: Array<{
     id: string;
     name: string;
+    kind?: "place" | "persistent" | "consumable";
     publicVisible?: boolean;
     publicSubmit?: boolean;
-    fields?: Array<{ key: string; label: string }>;
+    fields?: Array<{ key: string; label: string; required?: boolean }>;
   }>;
 };
+
+const inventoryFields = [
+  { key: "sku", label: "SKU / asset ID" },
+  { key: "location_code", label: "Storage location / bin" },
+  { key: "condition", label: "Condition" },
+  { key: "manufacturer", label: "Manufacturer / brand" },
+  { key: "lot_serial", label: "Lot / serial number" },
+];
+const duplicateFieldKeys = new Set(["identifier", "verified_date"]);
 
 function response(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -99,14 +110,34 @@ function promptFor(
   publicSearch = false,
 ) {
   const collections = visibleCollections(organization, publicSearch).map(
-    (collection) => ({
-      id: collection.id,
-      label: collection.name,
-      fields: (collection.fields || []).map((field) => ({
-        key: field.key,
-        label: field.label,
-      })),
-    }),
+    (collection) => {
+      const configured = new Map(
+        (collection.fields || [])
+          .filter((field) => !duplicateFieldKeys.has(field.key))
+          .map((field) => [field.key, field]),
+      );
+      const standard =
+        collection.kind === "place"
+          ? []
+          : inventoryFields.map((field) => ({
+              ...field,
+              required: configured.get(field.key)?.required || false,
+            }));
+      const custom = [...configured.values()].filter(
+        (field) =>
+          !inventoryFields.some(
+            (standardField) => standardField.key === field.key,
+          ) &&
+          field.key !== "quantity" &&
+          field.key !== "unit",
+      );
+      return {
+        id: collection.id,
+        label: collection.name,
+        kind: collection.kind || "persistent",
+        fields: [...standard, ...custom],
+      };
+    },
   );
   const existing = proposed
     ? `Existing user-entered values, which may be incomplete: ${JSON.stringify({
@@ -125,7 +156,7 @@ function promptFor(
 FIRST identify the main visible object from the pixels alone. Use ordinary, generic language and visible text. Do not use the organization context, collection names, or expected inventory to decide what the object is.
 Only after identifying it, use this organization context to decide whether it is plausibly relevant: ${catalogGuide}
 The organization context is a relevance filter only. It may cull irrelevant alternate terms. It must never rename, replace, or force the observed object into the organization's vocabulary. For example, a visible laptop remains a laptop even in a steel catalog; never call it a beam, plate, pipe, or metal inventory.
-Set catalog_match false when the visible subject is not a plausible catalog item. Still return honest generic name, description, category, keywords, and alternate search terms so the catalog can return zero results naturally. Set fields to an empty array. Choose one collection_id from this technical list, even when catalog_match is false: ${JSON.stringify(collectionIds)}.
+Set catalog_match false when the visible subject is not a plausible catalog item. Still return honest generic name, description, category, keywords, and alternate search terms so the catalog can return zero results naturally. Set fields, quantity and unit to empty values. Choose one collection_id from this technical list, even when catalog_match is false: ${JSON.stringify(collectionIds)}.
 Return a short plain-language name, one factual sentence, one broad category, 4-8 visible keywords, and 2-5 common alternate search terms. Read clearly visible brand or product text, but do not guess missing characters. Do not invent identifiers, measurements, ownership, condition, or hazards. Never identify a person, infer sensitive traits, transcribe license plates, or make safety guarantees.`;
   }
 
@@ -133,7 +164,7 @@ Return a short plain-language name, one factual sentence, one broad category, 4-
 First identify the visible object from the pixels. Then use this organization-specific catalog guide to select precise industry terminology, remove irrelevant alternatives, and populate supported fields: ${catalogGuide}
 The guide may refine an accurate identification, but it must not force a conflicting identity or invent attributes. Set catalog_match false if the visible object does not plausibly belong in this catalog; the employee can still correct it before submitting.
 Available collections and optional fields are data labels only: ${JSON.stringify(collections)}.
-Choose exactly one collection_id from that list. Write a short, plain-language item name and a concise factual description. Choose one broad category, 5-12 visible keywords, and 3-8 alternate terms a person might use to find this item. Read useful product labels, part numbers, and SKU-like text when clearly visible and place them in the closest supported field; do not guess missing characters. Return a visible quantity only when it can reasonably be counted; otherwise return quantity as "1". For fields, return only supported values using exact field keys from the chosen collection. Do not invent SKUs, serial numbers, conditions, measurements, ownership, or hazards. Never identify a person, infer sensitive traits, transcribe license plates, or make safety guarantees. Put uncertainty that a reviewer should check in warnings.`;
+Choose exactly one collection_id from that list. Write a short, plain-language item name and a concise factual description. Choose one broad category, 5-12 visible keywords, and 3-8 alternate terms a person might use to find this item. Read useful product labels, part numbers, and SKU-like text when clearly visible and place them in the closest supported field; do not guess missing characters. Return a visible quantity only when it can reasonably be counted; otherwise return quantity as "1". Return a short unit such as pieces, feet, cases or vehicles when it is reasonably implied; otherwise return an empty unit. For fields, return only supported values using exact field keys from the chosen collection. A field marked required still must remain empty when it cannot be determined from the photo—the employee will complete it. Do not invent SKUs, serial numbers, conditions, measurements, ownership, or hazards. Never identify a person, infer sensitive traits, transcribe license plates, or make safety guarantees. Put uncertainty that a reviewer should check in warnings.`;
 }
 
 async function reserveUsage(
@@ -196,6 +227,7 @@ async function runVision(openAiKey: string, imageUrl: string, prompt: string) {
               description: { type: "string" },
               category: { type: "string" },
               quantity: { type: "string" },
+              unit: { type: "string" },
               keywords: { type: "array", items: { type: "string" } },
               search_terms: { type: "array", items: { type: "string" } },
               fields: {
@@ -219,6 +251,7 @@ async function runVision(openAiKey: string, imageUrl: string, prompt: string) {
               "description",
               "category",
               "quantity",
+              "unit",
               "keywords",
               "search_terms",
               "fields",

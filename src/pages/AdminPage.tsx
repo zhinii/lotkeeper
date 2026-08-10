@@ -4,7 +4,14 @@ import MapView from "../components/MapView";
 import OrganizationMapEditor, {
   type MapConfiguration,
 } from "../components/OrganizationMapEditor";
-import { captureFieldLabel } from "../lib/captureFields";
+import {
+  captureFieldLabel,
+  customCollectionFields,
+  inventoryDataCaptureFields,
+  inventoryFieldRequired,
+  inventoryFieldsForCollection,
+  normalizeCollections,
+} from "../lib/captureFields";
 import { materialDefaults } from "../lib/collections";
 import { navigate } from "../lib/route";
 import { requireSupabase } from "../lib/supabase";
@@ -42,10 +49,7 @@ type OrganizationMember = {
 };
 
 function cloneCollections(collections: CollectionDefinition[]) {
-  return collections.map((collection) => ({
-    ...collection,
-    fields: collection.fields.map((field) => ({ ...field })),
-  }));
+  return normalizeCollections(collections);
 }
 
 function aiStatusLabel(status: Submission["ai_status"]) {
@@ -166,7 +170,7 @@ export default function AdminPage() {
   }, [session]);
   useEffect(() => {
     if (selected) {
-      setEditCollections(selected.collections);
+      setEditCollections(cloneCollections(selected.collections));
       setEditMap({
         latitude: selected.center_lat,
         longitude: selected.center_lng,
@@ -180,10 +184,20 @@ export default function AdminPage() {
         latitude: selected.center_lat,
         longitude: selected.center_lng,
       });
+      setSubmissionPhotos({});
       loadWorkspace(selected.id);
       loadMembers(selected.id);
     }
   }, [selected?.id]);
+  useEffect(() => {
+    if (tab !== "review") return;
+    const reviewSubmissions = submissions.filter((item) =>
+      reviewView === "pending"
+        ? item.status === "pending"
+        : item.status !== "pending",
+    );
+    void loadSubmissionPhotos(reviewSubmissions);
+  }, [tab, reviewView, submissions]);
 
   async function login(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -269,17 +283,26 @@ export default function AdminPage() {
     );
     setAlerts((alertRows.data || []) as AlertItem[]);
     setSearches((searchRows.data || []) as SearchEvent[]);
-    const photoEntries = await Promise.all(
-      ((submissionRows.data || []) as Submission[])
-        .filter((item) => item.photo_path)
-        .map(async (item) => {
-          const { data } = await client.storage
-            .from("submission-media")
-            .createSignedUrl(item.photo_path!, 1800);
-          return [item.id, data?.signedUrl || ""] as const;
-        }),
+  }
+
+  async function loadSubmissionPhotos(items: Submission[]) {
+    const missing = items.filter(
+      (item) => item.photo_path && !submissionPhotos[item.id],
     );
-    setSubmissionPhotos(Object.fromEntries(photoEntries));
+    if (!missing.length) return;
+    const client = requireSupabase();
+    const photoEntries = await Promise.all(
+      missing.map(async (item) => {
+        const { data } = await client.storage
+          .from("submission-media")
+          .createSignedUrl(item.photo_path!, 1800);
+        return [item.id, data?.signedUrl || ""] as const;
+      }),
+    );
+    setSubmissionPhotos((current) => ({
+      ...current,
+      ...Object.fromEntries(photoEntries),
+    }));
   }
 
   async function createOrganization(event: React.FormEvent<HTMLFormElement>) {
@@ -294,7 +317,7 @@ export default function AdminPage() {
       latitude: createMap.latitude,
       longitude: createMap.longitude,
       zoom_level: createMap.zoom,
-      collection_config: createCollections,
+      collection_config: normalizeCollections(createCollections),
     });
     if (error) return setMessage(error.message);
     if (newId) {
@@ -319,7 +342,7 @@ export default function AdminPage() {
     const { error } = await requireSupabase()
       .from("organizations")
       .update({
-        collections: editCollections,
+        collections: normalizeCollections(editCollections),
         public_access: editPublic,
         ai_enabled: editAi,
         ai_catalog_context: editAiContext.trim(),
@@ -553,15 +576,26 @@ export default function AdminPage() {
     const quantity = quantityText === "" ? null : Number(quantityText);
     const client = requireSupabase();
     const { data: user } = await client.auth.getUser();
-    const nextData = {
-      ...item.data,
-      sku: String(form.get("sku") || "").trim(),
-      location_code: String(form.get("location") || "").trim(),
-    };
+    const nextCollectionId = String(
+      form.get("collection_id") || item.collection_id,
+    );
+    const configuredCollection = selected?.collections.find(
+      (collection) => collection.id === nextCollectionId,
+    );
+    const nextData: Record<string, unknown> = { ...item.data };
+    for (const field of inventoryDataCaptureFields) {
+      nextData[field.key] = String(form.get(field.key) || "").trim();
+    }
+    for (const field of customCollectionFields(configuredCollection || null)) {
+      nextData[field.key] =
+        field.type === "boolean"
+          ? form.get(field.key) === "on"
+          : String(form.get(field.key) || "").trim();
+    }
     const { error } = await client
       .from("records")
       .update({
-        collection_id: String(form.get("collection_id") || item.collection_id),
+        collection_id: nextCollectionId,
         name: String(form.get("name") || "").trim(),
         description: String(form.get("description") || "").trim(),
         category: String(form.get("category") || "").trim() || "Uncategorized",
@@ -947,150 +981,190 @@ export default function AdminPage() {
               </button>
             </div>
             <div className="moderation-list">
-              {reviewItems.map((item) => (
-                <article key={item.id}>
-                  <div className="moderation-status">
-                    {item.status === "pending"
-                      ? "Waiting for your decision"
-                      : item.status === "approved"
-                        ? "Approved"
-                        : "Rejected"}
-                    {item.submission_type === "update"
-                      ? " · update to an item"
-                      : " · new item"}
-                  </div>
-                  <div className="review-media">
-                    {submissionPhotos[item.id] ? (
-                      <img
-                        src={submissionPhotos[item.id]}
-                        alt="Submitted evidence"
+              {reviewItems.map((item) => {
+                const reviewCollection = selected?.collections.find(
+                  (collection) => collection.id === item.collection_id,
+                );
+                const inventoryFields = reviewCollection
+                  ? inventoryFieldsForCollection(reviewCollection)
+                  : [];
+                const inventoryKeys = new Set<string>(
+                  inventoryFields.map((field) => field.key),
+                );
+                return (
+                  <article key={item.id}>
+                    <div className="moderation-status">
+                      {item.status === "pending"
+                        ? "Waiting for your decision"
+                        : item.status === "approved"
+                          ? "Approved"
+                          : "Rejected"}
+                      {item.submission_type === "update"
+                        ? " · update to an item"
+                        : " · new item"}
+                    </div>
+                    <div className="review-media">
+                      {submissionPhotos[item.id] ? (
+                        <img
+                          src={submissionPhotos[item.id]}
+                          alt="Submitted evidence"
+                        />
+                      ) : (
+                        <div className="empty">No new photo</div>
+                      )}
+                      <MapView
+                        latitude={item.latitude}
+                        longitude={item.longitude}
+                        zoom={18}
+                        compact
                       />
-                    ) : (
-                      <div className="empty">No new photo</div>
-                    )}
-                    <MapView
-                      latitude={item.latitude}
-                      longitude={item.longitude}
-                      zoom={18}
-                      compact
-                    />
-                  </div>
-                  <h2>{item.proposed.name}</h2>
-                  {item.target_record_id && (
-                    <small>Updates an existing approved record</small>
-                  )}
-                  <div className="compare-grid">
+                    </div>
+                    <h2>{item.proposed.name}</h2>
                     {item.target_record_id && (
-                      <div>
-                        <b>Currently published</b>
-                        <p>
-                          {
-                            records.find(
-                              (record) => record.id === item.target_record_id,
-                            )?.description
-                          }
-                        </p>
-                      </div>
+                      <small>Updates an existing approved record</small>
                     )}
-                    <div>
-                      <b>Submitted description</b>
-                      <p>{item.proposed.description}</p>
-                      <span>{item.ai_suggestions?.keywords?.join(" · ")}</span>
-                    </div>
-                    {item.ai_status === "complete" && (
-                      <div>
-                        <b>Suggested from the photo</b>
-                        <p>{item.ai_suggestions.description}</p>
-                        <span>{item.ai_suggestions.category}</span>
-                        {!!item.ai_suggestions.warnings?.length && (
-                          <small>
-                            Review note:{" "}
-                            {item.ai_suggestions.warnings.join("; ")}
-                          </small>
-                        )}
-                      </div>
-                    )}
-                    {item.ai_status === "failed" && (
-                      <div className="ai-failed">
-                        <b>Photo suggestions were not created</b>
-                        <p>
-                          The submission is safe to review without them, or you
-                          can try again.
-                        </p>
-                        <button onClick={() => retryAi(item)}>Try again</button>
-                      </div>
-                    )}
-                  </div>
-                  <dl>
-                    <div>
-                      <dt>Submitted</dt>
-                      <dd>{new Date(item.submitted_at).toLocaleString()}</dd>
-                    </div>
-                    <div>
-                      <dt>Map location</dt>
-                      <dd>
-                        {item.location_source === "photo_exif"
-                          ? "From the photo"
-                          : item.location_source === "browser_gps"
-                            ? "From the device"
-                            : "Placed on the map"}
-                      </dd>
-                    </div>
-                    <div>
-                      <dt>Photo suggestions</dt>
-                      <dd>{aiStatusLabel(item.ai_status)}</dd>
-                    </div>
-                    <div>
-                      <dt>Quantity</dt>
-                      <dd>
-                        {item.proposed.quantity ?? "Not provided"}{" "}
-                        {item.proposed.unit || ""}
-                      </dd>
-                    </div>
-                    <div>
-                      <dt>Date of capture</dt>
-                      <dd>
-                        {item.photo_taken_at
-                          ? new Date(item.photo_taken_at).toLocaleString()
-                          : "Not provided"}
-                      </dd>
-                    </div>
-                    {Object.entries(item.proposed.data || {})
-                      .filter(([, value]) => value !== "" && value != null)
-                      .map(([key, value]) => (
-                        <div key={key}>
-                          <dt>{captureFieldLabel(key)}</dt>
-                          <dd>{String(value)}</dd>
+                    <div className="compare-grid">
+                      {item.target_record_id && (
+                        <div>
+                          <b>Currently published</b>
+                          <p>
+                            {
+                              records.find(
+                                (record) => record.id === item.target_record_id,
+                              )?.description
+                            }
+                          </p>
                         </div>
-                      ))}
-                  </dl>
-                  <div className="moderation-actions">
-                    {item.status === "pending" ? (
-                      <>
+                      )}
+                      <div>
+                        <b>Submitted description</b>
+                        <p>{item.proposed.description}</p>
+                        <span>
+                          {item.ai_suggestions?.keywords?.join(" · ")}
+                        </span>
+                      </div>
+                      {item.ai_status === "complete" && (
+                        <div>
+                          <b>Suggested from the photo</b>
+                          <p>{item.ai_suggestions.description}</p>
+                          <span>{item.ai_suggestions.category}</span>
+                          {!!item.ai_suggestions.warnings?.length && (
+                            <small>
+                              Review note:{" "}
+                              {item.ai_suggestions.warnings.join("; ")}
+                            </small>
+                          )}
+                        </div>
+                      )}
+                      {item.ai_status === "failed" && (
+                        <div className="ai-failed">
+                          <b>Photo suggestions were not created</b>
+                          <p>
+                            The submission is safe to review without them, or
+                            you can try again.
+                          </p>
+                          <button onClick={() => retryAi(item)}>
+                            Try again
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                    <dl>
+                      <div>
+                        <dt>Submitted</dt>
+                        <dd>{new Date(item.submitted_at).toLocaleString()}</dd>
+                      </div>
+                      <div>
+                        <dt>Map location</dt>
+                        <dd>
+                          {item.location_source === "photo_exif"
+                            ? "From the photo"
+                            : item.location_source === "browser_gps"
+                              ? "From the device"
+                              : "Placed on the map"}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>Photo suggestions</dt>
+                        <dd>{aiStatusLabel(item.ai_status)}</dd>
+                      </div>
+                      {inventoryFields.map((field) => {
+                        const value =
+                          field.key === "quantity"
+                            ? item.proposed.quantity
+                            : field.key === "unit"
+                              ? item.proposed.unit
+                              : item.proposed.data?.[field.key];
+                        return (
+                          <div key={field.key}>
+                            <dt>
+                              {field.label}
+                              {reviewCollection &&
+                              inventoryFieldRequired(
+                                reviewCollection,
+                                field.key,
+                              )
+                                ? " · required"
+                                : ""}
+                            </dt>
+                            <dd>
+                              {value === "" || value == null
+                                ? "Not provided"
+                                : String(value)}
+                            </dd>
+                          </div>
+                        );
+                      })}
+                      <div>
+                        <dt>Date of capture</dt>
+                        <dd>
+                          {item.photo_taken_at
+                            ? new Date(item.photo_taken_at).toLocaleString()
+                            : "Not provided"}
+                        </dd>
+                      </div>
+                      {Object.entries(item.proposed.data || {})
+                        .filter(
+                          ([key, value]) =>
+                            !inventoryKeys.has(key) &&
+                            value !== "" &&
+                            value != null,
+                        )
+                        .map(([key, value]) => (
+                          <div key={key}>
+                            <dt>{captureFieldLabel(key)}</dt>
+                            <dd>{String(value)}</dd>
+                          </div>
+                        ))}
+                    </dl>
+                    <div className="moderation-actions">
+                      {item.status === "pending" ? (
+                        <>
+                          <button
+                            className="reject"
+                            onClick={() => review(item, "rejected")}
+                          >
+                            Reject submission
+                          </button>
+                          <button
+                            className="approve"
+                            onClick={() => review(item, "approved")}
+                          >
+                            Approve and publish
+                          </button>
+                        </>
+                      ) : (
                         <button
-                          className="reject"
-                          onClick={() => review(item, "rejected")}
+                          className="danger"
+                          onClick={() => deleteSubmission(item)}
                         >
-                          Reject submission
+                          Delete from history
                         </button>
-                        <button
-                          className="approve"
-                          onClick={() => review(item, "approved")}
-                        >
-                          Approve and publish
-                        </button>
-                      </>
-                    ) : (
-                      <button
-                        className="danger"
-                        onClick={() => deleteSubmission(item)}
-                      >
-                        Delete from history
-                      </button>
-                    )}
-                  </div>
-                </article>
-              ))}
+                      )}
+                    </div>
+                  </article>
+                );
+              })}
               {!reviewItems.length && (
                 <div className="admin-list-empty">
                   <span>✓</span>
@@ -1246,13 +1320,16 @@ export default function AdminPage() {
                         ))}
                       </select>
                     </label>
-                    <label>
-                      SKU / asset ID
-                      <input
-                        name="sku"
-                        defaultValue={String(item.data.sku || "")}
-                      />
-                    </label>
+                    {inventoryDataCaptureFields.map((field) => (
+                      <label key={field.key}>
+                        {field.label}
+                        <input
+                          name={field.key}
+                          defaultValue={String(item.data[field.key] || "")}
+                          placeholder={field.placeholder}
+                        />
+                      </label>
+                    ))}
                     <label>
                       Category
                       <input name="category" defaultValue={item.category} />
@@ -1275,16 +1352,28 @@ export default function AdminPage() {
                         placeholder="pieces, feet, cases"
                       />
                     </label>
-                    <label>
-                      Named location
-                      <input
-                        name="location"
-                        defaultValue={String(
-                          item.data.location_code || item.data.location || "",
+                    {customCollectionFields(
+                      selected?.collections.find(
+                        (collection) => collection.id === item.collection_id,
+                      ) || null,
+                    ).map((field) => (
+                      <label key={field.key}>
+                        {field.label}
+                        {field.type === "boolean" ? (
+                          <input
+                            name={field.key}
+                            type="checkbox"
+                            defaultChecked={Boolean(item.data[field.key])}
+                          />
+                        ) : (
+                          <input
+                            name={field.key}
+                            type={field.type}
+                            defaultValue={String(item.data[field.key] || "")}
+                          />
                         )}
-                        placeholder="Row A, bin 12"
-                      />
-                    </label>
+                      </label>
+                    ))}
                     <label>
                       Latitude
                       <input

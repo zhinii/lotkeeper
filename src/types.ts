@@ -88,7 +88,9 @@ export type Submission = {
   ai_suggestions: {
     name?: string;
     collection_id?: string;
+    catalog_match?: boolean;
     quantity?: string;
+    unit?: string;
     description?: string;
     category?: string;
     keywords?: string[];

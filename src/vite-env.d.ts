@@ -1,3 +1,2 @@
 /// <reference types="vite/client" />
-
-interface Window { maplibregl: any }
+declare interface Window { maplibregl: any; }

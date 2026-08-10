@@ -74,3 +74,13 @@ test("image enrichment is server-side, optional and cost limited", async () => {
   assert.match(edge, /gpt-4o-mini/);
   assert.match(client, /organization\.ai_enabled/);
 });
+
+test("admin onboarding exposes deployment type, fields and a clear empty state", async () => {
+  const admin = await read("src/pages/AdminPage.tsx");
+  assert.match(admin, /Create your first organization/);
+  assert.match(admin, /No organization to configure/);
+  assert.match(admin, /Civic · public places and contributions/);
+  assert.match(admin, /Commercial · inventory, materials and equipment/);
+  assert.match(admin, /value=\{createCollections\}/);
+  assert.match(admin, /Map and boundary/);
+});

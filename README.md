@@ -1,25 +1,27 @@
 # Lotkeeper V2
 
-Lotkeeper is a mobile-first visual location and inventory finder for civic and commercial spaces. It joins photographs, map pins, descriptions, searchable fields and accountable activity in one system.
+Lotkeeper is an installable, mobile-first visual location and inventory finder for civic and commercial spaces. It joins photographs, map pins, descriptions, searchable fields and accountable activity in one system while remaining available as a normal website.
 
 ## What it supports
 
-- **Civic deployments:** public maps, account-free photo submissions, EXIF GPS or browser GPS, manual pin correction, administrator approval/rejection, and reviewed updates to existing records.
+- **Civic deployments:** public maps and a photo-first, account-free submission flow. A visitor takes or chooses a photo; Lotkeeper reads EXIF date/GPS, falls back to current GPS, optionally suggests the collection, name, description, category, quantity, keywords and supported fields, then presents everything on a visual review screen before submission. Administrators still approve or reject every change.
 - **Commercial deployments:** private or public sites, custom collections, persistent assets, consumable inventory, quantities and units, search logging, inventory-use transactions, and administrator alerts.
 - **Every deployment:** organization branding, configurable opening map and boundary, configurable modules and fields, field-level public/private storage, responsive map/list search, record history, and resolved-alert reopening.
-- **Optional AI:** server-side image suggestions for descriptions, categories and search terms. AI is off by default, limited per organization, and never publishes without administrator review.
+- **Optional AI:** server-side photo suggestions that are shown before submission and remain editable. AI is off by default, limited per organization by a server-written usage ledger, and never publishes without administrator review.
+- **Installable web app:** a manifest, home-screen icons and service worker provide standalone launch and an offline application shell from the same GitHub Pages deployment.
 
 ## What V2 does not include yet
 
 - Reservations, ticketing, payments, purchasing or full ERP/accounting functions.
 - Automatic inventory reconciliation with external POS/ERP systems.
-- Turn-by-turn navigation, offline maps or native mobile apps.
+- Turn-by-turn navigation, offline map tiles, background submission syncing or separately maintained native mobile apps. The installable shell can open offline, but maps and database actions still require a connection.
 - A no-code staff invitation screen; initial users are invited through Supabase Authentication. Invited administrators can use a password or secure email sign-in link.
 - Guaranteed image identification. AI suggestions are search metadata and must be reviewed by a person.
 
 ## Architecture
 
 - React + TypeScript + Vite on GitHub Pages.
+- Progressive Web App manifest and service worker, using the same responsive code as the website.
 - MapLibre with OpenStreetMap raster tiles.
 - A dedicated Supabase project for Postgres, Authentication, Storage, RLS and the image-enrichment Edge Function.
 - OpenAI image understanding runs only inside the Edge Function. The browser never receives `OPENAI_API_KEY` or a Supabase service key.
@@ -57,7 +59,7 @@ People & Access screen.
 4. Copy `.env.example` to `.env.local` and add the project's URL and publishable key.
 5. Run `pnpm dev`.
 
-Do not place `OPENAI_API_KEY` in any `VITE_` variable. Deploy [`supabase/functions/enrich-submission/index.ts`](supabase/functions/enrich-submission/index.ts) as `enrich-submission`, turn legacy JWT verification off, and save `OPENAI_API_KEY` as an encrypted Edge Function secret. The implementation uses low-detail image input and Structured Outputs supported by the [OpenAI Images and Vision guide](https://developers.openai.com/api/docs/guides/images-vision) and [Structured Outputs guide](https://developers.openai.com/api/docs/guides/structured-outputs).
+Do not place `OPENAI_API_KEY` in any `VITE_` variable. Apply the migrations, deploy [`supabase/functions/enrich-submission/index.ts`](supabase/functions/enrich-submission/index.ts) as `enrich-submission`, turn legacy JWT verification off, and save `OPENAI_API_KEY` as an encrypted Edge Function secret. The photo-first preview sends a browser-compressed copy to the Edge Function; the original is uploaded only after the person confirms the form. The implementation uses low-detail image input and Structured Outputs supported by the [OpenAI Images and Vision guide](https://developers.openai.com/api/docs/guides/images-vision) and [Structured Outputs guide](https://developers.openai.com/api/docs/guides/structured-outputs).
 
 ## GitHub Pages
 

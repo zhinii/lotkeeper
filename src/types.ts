@@ -82,10 +82,14 @@ export type Submission = {
   status: "pending" | "approved" | "rejected";
   ai_status: "not_requested" | "queued" | "processing" | "complete" | "failed";
   ai_suggestions: {
+    name?: string;
+    collection_id?: string;
+    quantity?: string;
     description?: string;
     category?: string;
     keywords?: string[];
     search_terms?: string[];
+    fields?: { key: string; value: string }[];
     warnings?: string[];
     error?: string;
     description_applied?: boolean;

@@ -314,10 +314,11 @@ export default function DirectoryPage({ slug }: { slug: string }) {
         <button
           className="floating-add"
           onClick={() => navigate(`submit/${organization.slug}`)}
-          aria-label="Add an entry"
-          title="Add an entry"
+          aria-label="Add a photo"
+          title="Add a photo"
         >
-          +
+          <span aria-hidden="true">+</span>
+          <strong>Add a photo</strong>
         </button>
       )}
 

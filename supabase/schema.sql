@@ -96,6 +96,16 @@ create table public.submissions (
   ai_suggestions jsonb not null default '{}'::jsonb
 );
 
+-- Server-written usage events prevent anonymous photo previews from bypassing
+-- the per-organization AI budget. There are intentionally no browser policies.
+create table public.ai_usage_events (
+  id uuid primary key default gen_random_uuid(),
+  organization_id uuid not null references public.organizations(id) on delete cascade,
+  submission_id uuid references public.submissions(id) on delete set null,
+  purpose text not null check (purpose in ('preview','submission')),
+  created_at timestamptz not null default now()
+);
+
 create table public.inventory_transactions (
   id uuid primary key default gen_random_uuid(),
   organization_id uuid not null references public.organizations(id) on delete cascade,
@@ -133,6 +143,7 @@ create table public.alerts (
 
 create index records_org_collection on public.records(organization_id,collection_id,status);
 create index submissions_org_status on public.submissions(organization_id,status,submitted_at desc);
+create index ai_usage_org_created on public.ai_usage_events(organization_id,created_at desc);
 create index searches_org_created on public.search_events(organization_id,created_at desc);
 create index alerts_org_status on public.alerts(organization_id,status,created_at desc);
 
@@ -143,6 +154,7 @@ alter table public.records enable row level security;
 alter table public.record_private_data enable row level security;
 alter table public.record_versions enable row level security;
 alter table public.submissions enable row level security;
+alter table public.ai_usage_events enable row level security;
 alter table public.inventory_transactions enable row level security;
 alter table public.search_events enable row level security;
 alter table public.alerts enable row level security;
@@ -287,6 +299,7 @@ grant select on public.platform_admins to authenticated;
 grant select on public.record_private_data to authenticated;
 grant insert on public.submissions to anon,authenticated;
 grant select,update on public.submissions to service_role;
+grant select,insert on public.ai_usage_events to service_role;
 grant select,insert,update,delete on all tables in schema public to authenticated;
 grant execute on function public.create_organization to authenticated;
 grant execute on function public.approve_submission to authenticated;

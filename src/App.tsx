@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import InstallAppButton from "./components/InstallAppButton";
 import AdminPage from "./pages/AdminPage";
 import DirectoryPage from "./pages/DirectoryPage";
 import SubmitPage from "./pages/SubmitPage";
@@ -45,9 +46,12 @@ function HomePage() {
           <div className="brand">LOTKEEPER</div>
           <small>Visual places and inventory</small>
         </div>
-        <button className="quiet-button" onClick={() => navigate("admin")}>
-          Admin
-        </button>
+        <div className="home-actions">
+          <InstallAppButton />
+          <button className="quiet-button" onClick={() => navigate("admin")}>
+            Admin
+          </button>
+        </div>
       </header>
       <section className="hero">
         <p>CHOOSE A PLACE</p>

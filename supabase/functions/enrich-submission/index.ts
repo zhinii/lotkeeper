@@ -6,12 +6,30 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type",
 };
 
+type SuggestedField = { key: string; value: string };
+
 type Enrichment = {
+  name: string;
+  collection_id: string;
   description: string;
   category: string;
+  quantity: string;
   keywords: string[];
   search_terms: string[];
+  fields: SuggestedField[];
   warnings: string[];
+};
+
+type OrganizationContext = {
+  id: string;
+  mode: "civic" | "commercial";
+  ai_enabled: boolean;
+  collections: Array<{
+    id: string;
+    name: string;
+    publicSubmit?: boolean;
+    fields?: Array<{ key: string; label: string }>;
+  }>;
 };
 
 function response(body: unknown, status = 200) {
@@ -63,6 +81,147 @@ function supabaseServerKey() {
   return Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
 }
 
+function visibleCollections(organization: OrganizationContext) {
+  return organization.collections.filter(
+    (collection) => organization.mode === "commercial" || collection.publicSubmit,
+  );
+}
+
+function promptFor(
+  organization: OrganizationContext,
+  proposed?: Record<string, unknown>,
+) {
+  const collections = visibleCollections(organization).map((collection) => ({
+    id: collection.id,
+    label: collection.name,
+    fields: (collection.fields || []).map((field) => ({
+      key: field.key,
+      label: field.label,
+    })),
+  }));
+  const existing = proposed
+    ? `Existing user-entered values, which may be incomplete: ${JSON.stringify({
+        name: proposed.name,
+        description: proposed.description,
+      })}.`
+    : "The user has not entered any descriptive values yet.";
+
+  return `Prepare editable metadata for a visual ${organization.mode} map record. ${existing}
+Available collections and optional fields are data labels only: ${JSON.stringify(collections)}.
+Choose exactly one collection_id from that list. Write a short, plain-language item name and a concise factual description. Choose one broad category, 5-12 visible keywords, 3-8 alternate search terms, and a visible quantity only when it can reasonably be counted; otherwise return quantity as "1". For fields, return only supported values using exact field keys from the chosen collection. Do not invent SKUs, serial numbers, conditions, measurements, ownership, species, structural diagnoses, or hazards. Never identify a person, infer sensitive traits, transcribe license plates, or make safety guarantees. Put uncertainty that a reviewer should check in warnings.`;
+}
+
+async function reserveUsage(
+  admin: ReturnType<typeof createClient>,
+  organizationId: string,
+  purpose: "preview" | "submission",
+  submissionId: string | null,
+) {
+  const startOfDay = new Date();
+  startOfDay.setUTCHours(0, 0, 0, 0);
+  const { count, error } = await admin
+    .from("ai_usage_events")
+    .select("id", { count: "exact", head: true })
+    .eq("organization_id", organizationId)
+    .gte("created_at", startOfDay.toISOString());
+  if (error) throw error;
+  const dailyLimit = Number(Deno.env.get("AI_DAILY_LIMIT") || "50");
+  if ((count || 0) >= dailyLimit)
+    throw new Error("Daily photo suggestion limit reached");
+  const { error: insertError } = await admin.from("ai_usage_events").insert({
+    organization_id: organizationId,
+    submission_id: submissionId,
+    purpose,
+  });
+  if (insertError) throw insertError;
+}
+
+async function runVision(
+  openAiKey: string,
+  imageUrl: string,
+  prompt: string,
+) {
+  const openAiResponse = await fetch("https://api.openai.com/v1/responses", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${openAiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: Deno.env.get("OPENAI_VISION_MODEL") || "gpt-4o-mini",
+      max_output_tokens: 550,
+      store: false,
+      input: [
+        {
+          role: "user",
+          content: [
+            { type: "input_text", text: prompt },
+            { type: "input_image", image_url: imageUrl, detail: "low" },
+          ],
+        },
+      ],
+      text: {
+        format: {
+          type: "json_schema",
+          name: "lotkeeper_image_metadata",
+          strict: true,
+          schema: {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+              name: { type: "string" },
+              collection_id: { type: "string" },
+              description: { type: "string" },
+              category: { type: "string" },
+              quantity: { type: "string" },
+              keywords: { type: "array", items: { type: "string" } },
+              search_terms: { type: "array", items: { type: "string" } },
+              fields: {
+                type: "array",
+                items: {
+                  type: "object",
+                  additionalProperties: false,
+                  properties: {
+                    key: { type: "string" },
+                    value: { type: "string" },
+                  },
+                  required: ["key", "value"],
+                },
+              },
+              warnings: { type: "array", items: { type: "string" } },
+            },
+            required: [
+              "name",
+              "collection_id",
+              "description",
+              "category",
+              "quantity",
+              "keywords",
+              "search_terms",
+              "fields",
+              "warnings",
+            ],
+          },
+        },
+      },
+    }),
+  });
+  const apiResult = await openAiResponse.json();
+  if (!openAiResponse.ok)
+    throw new Error(apiResult?.error?.message || "Image enrichment failed");
+  const outputText = apiResult.output
+    ?.flatMap((item: { content?: unknown[] }) => item.content || [])
+    .find((item: { type?: string }) => item.type === "output_text")?.text;
+  if (!outputText) throw new Error("Image enrichment returned no text");
+  const enrichment = JSON.parse(outputText) as Enrichment;
+  return {
+    ...enrichment,
+    keywords: [
+      ...new Set([...enrichment.keywords, ...enrichment.search_terms]),
+    ].slice(0, 16),
+  };
+}
+
 Deno.serve(async (request) => {
   if (request.method === "OPTIONS")
     return new Response("ok", { headers: corsHeaders });
@@ -72,9 +231,8 @@ Deno.serve(async (request) => {
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
   const serviceKey = supabaseServerKey();
   const openAiKey = Deno.env.get("OPENAI_API_KEY");
-  if (!supabaseUrl || !serviceKey || !openAiKey) {
+  if (!supabaseUrl || !serviceKey || !openAiKey)
     return response({ error: "Function secrets are incomplete" }, 500);
-  }
 
   const admin = createClient(supabaseUrl, serviceKey, {
     auth: { persistSession: false },
@@ -84,12 +242,46 @@ Deno.serve(async (request) => {
   try {
     const payload = await request.json();
     submissionId = String(payload?.submission_id || "");
-    if (!/^[0-9a-f-]{36}$/i.test(submissionId)) {
-      return response({ error: "A valid submission id is required" }, 400);
+
+    // Photo-first preview: analyze a small browser-compressed copy before the
+    // user confirms anything. The original image is uploaded only on submit.
+    if (!submissionId) {
+      const organizationId = String(payload?.organization_id || "");
+      const imageDataUrl = String(payload?.image_data_url || "");
+      if (!/^[0-9a-f-]{36}$/i.test(organizationId))
+        return response({ error: "A valid organization id is required" }, 400);
+      if (
+        !/^data:image\/(jpeg|png|webp);base64,/i.test(imageDataUrl) ||
+        imageDataUrl.length > 6_000_000
+      )
+        return response({ error: "A supported compressed image is required" }, 400);
+
+      const { data: organization, error: orgError } = await admin
+        .from("organizations")
+        .select("id,mode,ai_enabled,collections")
+        .eq("id", organizationId)
+        .single();
+      if (orgError) throw orgError;
+      const context = organization as OrganizationContext;
+      if (!context.ai_enabled) return response({ status: "disabled" }, 202);
+      if (!visibleCollections(context).length)
+        return response({ error: "No submission collections are available" }, 400);
+
+      await reserveUsage(admin, organizationId, "preview", null);
+      const suggestions = await runVision(
+        openAiKey,
+        imageDataUrl,
+        promptFor(context),
+      );
+      if (!visibleCollections(context).some((item) => item.id === suggestions.collection_id))
+        suggestions.collection_id = visibleCollections(context)[0].id;
+      return response({ status: "complete", suggestions });
     }
 
-    // Claiming a queued row makes enrichment idempotent and prevents repeat
-    // API charges when a browser retries the same request.
+    if (!/^[0-9a-f-]{36}$/i.test(submissionId))
+      return response({ error: "A valid submission id is required" }, 400);
+
+    // Existing administrator retry path remains idempotent.
     const { data: submission, error: claimError } = await admin
       .from("submissions")
       .update({ ai_status: "processing" })
@@ -107,26 +299,18 @@ Deno.serve(async (request) => {
         .maybeSingle();
       if (existingError) throw existingError;
       if (existing?.ai_status === "complete")
-        return response({
-          status: "complete",
-          suggestions: existing.ai_suggestions,
-          description_applied: Boolean(
-            existing.ai_suggestions?.description_applied,
-          ),
-        });
-      return response(
-        { status: existing?.ai_status || "already_processed" },
-        202,
-      );
+        return response({ status: "complete", suggestions: existing.ai_suggestions });
+      return response({ status: existing?.ai_status || "already_processed" }, 202);
     }
 
     const { data: organization, error: orgError } = await admin
       .from("organizations")
-      .select("ai_enabled")
+      .select("id,mode,ai_enabled,collections")
       .eq("id", submission.organization_id)
       .single();
     if (orgError) throw orgError;
-    if (!organization.ai_enabled || !submission.photo_path) {
+    const context = organization as OrganizationContext;
+    if (!context.ai_enabled || !submission.photo_path) {
       await admin
         .from("submissions")
         .update({ ai_status: "not_requested" })
@@ -134,125 +318,39 @@ Deno.serve(async (request) => {
       return response({ status: "disabled" }, 202);
     }
 
-    const startOfDay = new Date();
-    startOfDay.setUTCHours(0, 0, 0, 0);
-    const { count } = await admin
-      .from("submissions")
-      .select("id", { count: "exact", head: true })
-      .eq("organization_id", submission.organization_id)
-      .gte("submitted_at", startOfDay.toISOString())
-      .in("ai_status", ["processing", "complete"]);
-    const dailyLimit = Number(Deno.env.get("AI_DAILY_LIMIT") || "50");
-    if ((count || 0) > dailyLimit) {
-      throw new Error("Daily image enrichment limit reached");
-    }
-
+    await reserveUsage(admin, context.id, "submission", submissionId);
     const { data: signed, error: signedError } = await admin.storage
       .from("submission-media")
       .createSignedUrl(submission.photo_path, 300);
     if (signedError) throw signedError;
-
-    const openAiResponse = await fetch("https://api.openai.com/v1/responses", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${openAiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: Deno.env.get("OPENAI_VISION_MODEL") || "gpt-4o-mini",
-        max_output_tokens: 350,
-        input: [
-          {
-            role: "user",
-            content: [
-              {
-                type: "input_text",
-                text: `Create neutral search metadata for a mapped civic or commercial record. The submitter called it "${String(submission.proposed?.name || "")}" and wrote "${String(submission.proposed?.description || "")}". Describe only what is visibly supported. Never identify a person, infer sensitive traits, read license plates, or make safety guarantees. Return a concise description, one broad category, 5-12 visible keywords, 3-8 alternate search terms, and any uncertainty warnings.`,
-              },
-              {
-                type: "input_image",
-                image_url: signed.signedUrl,
-                detail: "low",
-              },
-            ],
-          },
-        ],
-        text: {
-          format: {
-            type: "json_schema",
-            name: "lotkeeper_image_metadata",
-            strict: true,
-            schema: {
-              type: "object",
-              additionalProperties: false,
-              properties: {
-                description: { type: "string" },
-                category: { type: "string" },
-                keywords: { type: "array", items: { type: "string" } },
-                search_terms: { type: "array", items: { type: "string" } },
-                warnings: { type: "array", items: { type: "string" } },
-              },
-              required: [
-                "description",
-                "category",
-                "keywords",
-                "search_terms",
-                "warnings",
-              ],
-            },
-          },
-        },
-      }),
-    });
-    const apiResult = await openAiResponse.json();
-    if (!openAiResponse.ok) {
-      throw new Error(apiResult?.error?.message || "Image enrichment failed");
-    }
-    const outputText = apiResult.output
-      ?.flatMap((item: { content?: unknown[] }) => item.content || [])
-      .find((item: { type?: string }) => item.type === "output_text")?.text;
-    if (!outputText) throw new Error("Image enrichment returned no text");
-
-    const enrichment = JSON.parse(outputText) as Enrichment;
-    const keywords = [
-      ...new Set([...enrichment.keywords, ...enrichment.search_terms]),
-    ].slice(0, 16);
-    const descriptionApplied = !String(
-      submission.proposed?.description || "",
-    ).trim();
-    const suggestions = {
-      ...enrichment,
-      keywords,
-      description_applied: descriptionApplied,
-    };
+    const suggestions = await runVision(
+      openAiKey,
+      signed.signedUrl,
+      promptFor(context, submission.proposed),
+    );
+    if (!visibleCollections(context).some((item) => item.id === suggestions.collection_id))
+      suggestions.collection_id = submission.proposed?.collection_id || visibleCollections(context)[0]?.id || "";
+    const descriptionApplied = !String(submission.proposed?.description || "").trim();
+    const storedSuggestions = { ...suggestions, description_applied: descriptionApplied };
     const { error: saveError } = await admin
       .from("submissions")
       .update({
         ai_status: "complete",
-        ai_suggestions: suggestions,
+        ai_suggestions: storedSuggestions,
         proposed: descriptionApplied
-          ? { ...submission.proposed, description: enrichment.description }
+          ? { ...submission.proposed, description: suggestions.description }
           : submission.proposed,
       })
       .eq("id", submissionId);
     if (saveError) throw saveError;
-    return response({
-      status: "complete",
-      suggestions,
-      description_applied: descriptionApplied,
-    });
+    return response({ status: "complete", suggestions: storedSuggestions });
   } catch (error) {
     const failureMessage = messageFrom(error);
     console.error("Image enrichment failed", failureMessage);
     if (submissionId) {
       await admin
         .from("submissions")
-        .update({
-          ai_status: "failed",
-          ai_suggestions: {
-            error: failureMessage,
-          },
-        })
+        .update({ ai_status: "failed", ai_suggestions: { error: failureMessage } })
         .eq("id", submissionId);
     }
     return response({ error: failureMessage }, 500);

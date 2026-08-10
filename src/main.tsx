@@ -4,3 +4,11 @@ import App from "./App";
 import "./styles.css";
 
 createRoot(document.getElementById("root")!).render(<StrictMode><App /></StrictMode>);
+
+if (import.meta.env.PROD && "serviceWorker" in navigator) {
+  addEventListener("load", () => {
+    navigator.serviceWorker.register(`${import.meta.env.BASE_URL}sw.js`).catch(() => {
+      // Installation is an enhancement; the normal website remains available.
+    });
+  });
+}

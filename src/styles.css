@@ -1080,6 +1080,12 @@ button:disabled {
 .map-view.boundary-editor canvas {
   cursor: crosshair;
 }
+.map-view.boundary-editor,
+.map-view.boundary-editor .maplibregl-canvas-container,
+.map-view.boundary-editor canvas {
+  touch-action: none;
+  overscroll-behavior: contain;
+}
 .map-tool-status {
   margin-top: 10px;
   border-left: 5px solid var(--blue);

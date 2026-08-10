@@ -99,7 +99,11 @@ test("boundary drawing uses the current map tool and shows every point", async (
   assert.match(map, /currentBoundary\.current/);
   assert.match(map, /type: "Point"/);
   assert.match(map, /type: "LineString"/);
+  assert.match(map, /instance\.dragPan/);
+  assert.match(map, /instance\.touchZoomRotate/);
+  assert.match(map, /boundaryEditor \? control\?\.disable\(\)/);
   assert.match(editor, /Boundary drawing is active/);
+  assert.match(editor, /map is locked while drawing/);
   assert.match(editor, /Add at least 3 points to form an area/);
 });
 

@@ -2528,6 +2528,56 @@ body:has(.login-page) {
   background: #e9eeeb;
 }
 
+.app-error-page {
+  display: grid;
+  min-height: 100dvh;
+  place-items: center;
+  padding: 20px;
+  color: #18231f;
+  background: #f3f5f1;
+}
+
+.app-error-page section {
+  width: min(100%, 520px);
+  padding: 28px;
+  border: 1px solid #d4ddd5;
+  border-radius: 22px;
+  background: #fff;
+  box-shadow: 0 14px 38px #27403514;
+}
+
+.app-error-page small {
+  color: #24704e;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+}
+
+.app-error-page h1 {
+  margin: 10px 0;
+}
+
+.app-error-page p {
+  color: #627069;
+  line-height: 1.55;
+}
+
+.app-error-page button {
+  min-height: 48px;
+  margin: 8px 8px 0 0;
+  padding: 12px 16px;
+  color: #fff;
+  border: 0;
+  border-radius: 11px;
+  background: #24704e;
+  font-weight: 850;
+}
+
+.app-error-page button.secondary {
+  color: #20372d;
+  border: 1px solid #b8c5bc;
+  background: #fff;
+}
+
 .admin-page {
   width: min(100%, 1440px);
   min-height: 100dvh;
@@ -3981,6 +4031,13 @@ body:has(.login-page) {
   min-width: 0;
   overflow: hidden;
   background: #14211c;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+.crop-canvas-wrap:active {
+  cursor: grabbing;
 }
 
 .crop-canvas-wrap > img {
@@ -4041,17 +4098,45 @@ body:has(.login-page) {
   background: #f6f8f5;
 }
 
-.crop-controls label {
+.crop-gesture-help {
   display: grid;
-  gap: 9px;
-  color: #304139;
-  font-size: 12px;
-  font-weight: 850;
+  gap: 7px;
 }
 
-.crop-controls input[type="range"] {
-  width: 100%;
-  accent-color: var(--public-green, #24704e);
+.crop-gesture-help strong {
+  color: #20372d;
+  font-size: 16px;
+}
+
+.crop-gesture-help span {
+  color: #627069;
+  font-size: 12px;
+}
+
+.crop-zoom-buttons {
+  display: grid;
+  grid-template-columns: 48px 1fr 48px;
+  align-items: center;
+  overflow: hidden;
+  border: 1px solid #b8c5bc;
+  border-radius: 12px;
+  background: #fff;
+}
+
+.crop-zoom-buttons button {
+  min-height: 48px;
+  padding: 0;
+  color: #173e2e;
+  border: 0;
+  background: #e7f0eb;
+  font-size: 25px;
+}
+
+.crop-zoom-buttons output {
+  text-align: center;
+  color: #304139;
+  font-size: 13px;
+  font-weight: 850;
 }
 
 .crop-step-actions {

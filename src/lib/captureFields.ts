@@ -93,7 +93,7 @@ export function inventoryFieldRequired(
   key: InventoryCaptureKey,
 ) {
   return Boolean(
-    collection?.fields.find((field) => field.key === key)?.required,
+    collection?.fields?.find((field) => field.key === key)?.required,
   );
 }
 
@@ -110,22 +110,30 @@ export function customCollectionFields(
 export function normalizeCollection(
   collection: CollectionDefinition,
 ): CollectionDefinition {
+  const kind = collection.kind || "persistent";
+  const rawFields = Array.isArray(collection.fields) ? collection.fields : [];
   const existing = new Map(
-    collection.fields
+    rawFields
       .filter((field) => !legacyDuplicateKeys.has(field.key))
       .map((field) => [field.key, field]),
   );
   const inventoryFields =
-    collection.kind === "place"
+    kind === "place"
       ? []
       : inventoryCaptureFields.map((field) =>
           fieldDefinition(field, existing.get(field.key)),
         );
   return {
     ...collection,
-    fields: [...inventoryFields, ...customCollectionFields(collection)].map(
-      (field) => ({ ...field }),
-    ),
+    kind,
+    fields: [
+      ...inventoryFields,
+      ...rawFields.filter(
+        (field) =>
+          !inventoryCaptureKeys.has(field.key) &&
+          !legacyDuplicateKeys.has(field.key),
+      ),
+    ].map((field) => ({ ...field })),
   };
 }
 

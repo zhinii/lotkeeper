@@ -3070,6 +3070,173 @@ body:has(.login-page) {
   margin: 8px 0;
 }
 
+.schema-note {
+  display: grid;
+  gap: 4px;
+  margin-top: 12px;
+  padding: 12px;
+  color: var(--public-green-dark);
+  background: var(--public-mint);
+  border-radius: 12px;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.employee-create-form {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  background: #f5f7f5;
+  border: 1px solid var(--public-line);
+  border-radius: 14px;
+}
+
+.employee-create-form label,
+.employee-account-settings label {
+  display: grid;
+  gap: 5px;
+  color: var(--public-muted);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.employee-create-form input,
+.employee-create-form select,
+.employee-account-settings input {
+  min-height: 44px;
+  padding: 10px 11px;
+  color: var(--public-ink);
+  background: #fff;
+  border: 1px solid var(--public-line);
+  border-radius: 10px;
+}
+
+.employee-create-form label small {
+  font-size: 9px;
+  font-weight: 500;
+}
+
+.employee-create-form .save-button {
+  min-height: 46px;
+  color: #fff;
+  background: var(--public-green);
+  border-radius: 10px;
+}
+
+.employee-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.employee-list article {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 11px 12px;
+  background: #fff;
+  border: 1px solid var(--public-line);
+  border-radius: 11px;
+}
+
+.employee-list article span {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.employee-list article b {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.employee-list article small,
+.employee-list > p,
+.employee-password-note {
+  margin: 0;
+  color: var(--public-muted);
+  font-size: 10px;
+}
+
+.employee-list article button {
+  min-height: 36px;
+  flex: 0 0 auto;
+  color: #8c2f24;
+  background: #fff;
+  border: 1px solid #d8a7a0;
+  border-radius: 9px;
+}
+
+.employee-password-note {
+  margin-top: 10px;
+  line-height: 1.5;
+}
+
+.organization-danger-zone {
+  display: grid;
+  gap: 14px;
+  margin: 22px 0 14px;
+  padding: 16px;
+  background: #fff8f7;
+  border: 1px solid #e0afa8;
+  border-radius: 16px;
+}
+
+.organization-danger-zone small {
+  color: #8c2f24;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+}
+
+.organization-danger-zone h2 {
+  margin: 4px 0;
+  color: #6f2118;
+}
+
+.organization-danger-zone p {
+  margin: 0;
+  color: #76544f;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.organization-danger-zone button {
+  min-height: 46px;
+  color: #fff;
+  background: #9d3226;
+  border-radius: 11px;
+  font-weight: 900;
+}
+
+.employee-account-settings {
+  margin-top: 22px;
+  padding: 14px;
+  background: #fff;
+  border: 1px solid var(--public-line);
+  border-radius: 14px;
+}
+
+.employee-account-settings summary {
+  cursor: pointer;
+  color: var(--public-green-dark);
+  font-weight: 800;
+}
+
+.employee-account-settings form {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.employee-account-settings button {
+  min-height: 44px;
+  color: #fff;
+  background: var(--public-green);
+  border-radius: 10px;
+}
+
 .settings-save-bar {
   position: sticky;
   bottom: 72px;
@@ -3523,6 +3690,17 @@ body:has(.login-page) {
 
   .settings-save-bar span {
     text-align: left;
+  }
+
+  .employee-create-form {
+    grid-template-columns: minmax(180px, 1fr) minmax(180px, 1fr);
+    align-items: end;
+  }
+
+  .organization-danger-zone {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    padding: 20px 24px;
   }
 }
 

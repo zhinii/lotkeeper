@@ -8,7 +8,7 @@ Live site: <https://zhinii.github.io/lotkeeper/>
 
 - **Public:** choose an organization, view its public items, search by text or photo, filter like a product catalog, and see matching pins on the map. Public visitors cannot change records.
 - **Employee:** sign in to add a photo and pin, update an existing item, record inventory use, and mark the item public or employee-only. GPS can come from photo EXIF, browser location or a manually adjusted map pin.
-- **Administrator:** review employee submissions, edit every standard field, change quantities and coordinates, archive items, import inventory CSV files, map generic inventory pins, configure organizations, and review search activity.
+- **Administrator:** create and assign employee logins, review submissions, edit every standard field, change quantities and coordinates, archive items, import inventory CSV files, map generic inventory pins, configure organizations, and review search activity. Organization owners and platform administrators can also permanently delete a deployment from its settings.
 
 Every captured item supports a name, description, quantity, unit, SKU or asset ID, named location, category, GPS coordinates, visibility, timestamps and the account that updated it. Additional organization-specific fields remain configurable.
 
@@ -19,6 +19,8 @@ Text search matches names, descriptions, categories, keywords, SKUs, manufacture
 Optional photo search sends a compressed preview to the server-side OpenAI vision workflow. The API returns visible descriptors, readable product/SKU clues and alternate search terms; Material Pin then searches the catalog text. OpenAI text embedding models do not accept images, so this is the practical first implementation for a mixed inventory catalog. It is cost-limited per organization and the API key never enters the browser bundle.
 
 Each organization can maintain an **AI catalog guide** describing its business, common materials or assets, preferred terminology, identifier formats and facts the AI must not guess. This makes the same image workflow useful for steel service centers, salvage yards, warehouses and other specialized catalogs without changing code.
+
+Custom lists and fields do not create SQL columns. Their definitions are stored in the organization's `collections` JSON configuration, while field values use the public or private JSON data attached to each record. This lets deployments add fields without database migrations and keeps older records valid when a form changes.
 
 ## CSV inventory import
 

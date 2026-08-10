@@ -17,7 +17,13 @@ import type {
   Submission,
 } from "../types";
 
-type Tab = "overview" | "review" | "records" | "activity" | "configure" | "create";
+type Tab =
+  | "overview"
+  | "review"
+  | "records"
+  | "activity"
+  | "configure"
+  | "create";
 
 const adminTabs: { id: Tab; label: string; icon: string }[] = [
   { id: "overview", label: "Home", icon: "⌂" },
@@ -26,6 +32,14 @@ const adminTabs: { id: Tab; label: string; icon: string }[] = [
   { id: "activity", label: "Searches", icon: "⌕" },
   { id: "configure", label: "Settings", icon: "⚙" },
 ];
+
+type OrganizationMember = {
+  user_id: string;
+  email: string;
+  role: "admin" | "staff";
+  created_at: string;
+  is_owner: boolean;
+};
 
 function cloneCollections(collections: CollectionDefinition[]) {
   return collections.map((collection) => ({
@@ -39,6 +53,20 @@ function aiStatusLabel(status: Submission["ai_status"]) {
   if (status === "queued" || status === "processing") return "Analyzing photo";
   if (status === "failed") return "Photo analysis needs another try";
   return "Photo analysis not used";
+}
+
+async function functionErrorMessage(data: any, error: any, fallback: string) {
+  if (data?.error) return String(data.error);
+  try {
+    const context = error?.context;
+    if (context && typeof context.json === "function") {
+      const body = await context.json();
+      if (body?.error) return String(body.error);
+    }
+  } catch {
+    // Use the SDK message below when the response body is unavailable.
+  }
+  return error?.message || fallback;
 }
 
 function parseCsv(text: string) {
@@ -67,11 +95,18 @@ function parseCsv(text: string) {
   if (row.some(Boolean)) rows.push(row);
   if (rows.length < 2) return [];
   const headers = rows[0].map((header) =>
-    header.toLowerCase().trim().replace(/[^a-z0-9]+/g, "_"),
+    header
+      .toLowerCase()
+      .trim()
+      .replace(/[^a-z0-9]+/g, "_"),
   );
-  return rows.slice(1).map((cells) =>
-    Object.fromEntries(headers.map((header, index) => [header, cells[index] || ""])),
-  );
+  return rows
+    .slice(1)
+    .map((cells) =>
+      Object.fromEntries(
+        headers.map((header, index) => [header, cells[index] || ""]),
+      ),
+    );
 }
 
 export default function AdminPage() {
@@ -83,6 +118,8 @@ export default function AdminPage() {
   const [records, setRecords] = useState<RecordItem[]>([]);
   const [alerts, setAlerts] = useState<AlertItem[]>([]);
   const [searches, setSearches] = useState<SearchEvent[]>([]);
+  const [members, setMembers] = useState<OrganizationMember[]>([]);
+  const [membersLoading, setMembersLoading] = useState(false);
   const [submissionPhotos, setSubmissionPhotos] = useState<
     Record<string, string>
   >({});
@@ -144,6 +181,7 @@ export default function AdminPage() {
         longitude: selected.center_lng,
       });
       loadWorkspace(selected.id);
+      loadMembers(selected.id);
     }
   }, [selected?.id]);
 
@@ -265,7 +303,9 @@ export default function AdminPage() {
         .update({
           boundary: createMap.boundary,
           ai_enabled: form.get("ai_enabled") === "on",
-          ai_catalog_context: String(form.get("ai_catalog_context") || "").trim(),
+          ai_catalog_context: String(
+            form.get("ai_catalog_context") || "",
+          ).trim(),
         })
         .eq("id", newId);
       if (setupError) return setMessage(setupError.message);
@@ -294,6 +334,118 @@ export default function AdminPage() {
     await loadOrganizations();
   }
 
+  async function loadMembers(organizationId: string) {
+    setMembersLoading(true);
+    const { data, error } = await requireSupabase().functions.invoke(
+      "manage-organization",
+      { body: { action: "list_members", organization_id: organizationId } },
+    );
+    setMembersLoading(false);
+    if (error || data?.error) {
+      setMembers([]);
+      return setMessage(
+        await functionErrorMessage(
+          data,
+          error,
+          "Employee accounts could not be loaded.",
+        ),
+      );
+    }
+    setMembers((data?.members || []) as OrganizationMember[]);
+  }
+
+  async function createEmployee(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selected) return;
+    const formElement = event.currentTarget;
+    const form = new FormData(formElement);
+    setMessage("Creating employee access…");
+    const { data, error } = await requireSupabase().functions.invoke(
+      "manage-organization",
+      {
+        body: {
+          action: "create_employee",
+          organization_id: selected.id,
+          email: String(form.get("employee_email") || "").trim(),
+          password: String(form.get("temporary_password") || ""),
+          role: String(form.get("employee_role") || "staff"),
+        },
+      },
+    );
+    if (error || data?.error)
+      return setMessage(
+        await functionErrorMessage(
+          data,
+          error,
+          "Employee access could not be created.",
+        ),
+      );
+    formElement.reset();
+    setMessage(data.message || "Employee access created.");
+    await loadMembers(selected.id);
+  }
+
+  async function removeMember(member: OrganizationMember) {
+    if (!selected || !confirm(`Remove ${member.email} from ${selected.name}?`))
+      return;
+    const { data, error } = await requireSupabase().functions.invoke(
+      "manage-organization",
+      {
+        body: {
+          action: "remove_member",
+          organization_id: selected.id,
+          user_id: member.user_id,
+        },
+      },
+    );
+    if (error || data?.error)
+      return setMessage(
+        await functionErrorMessage(
+          data,
+          error,
+          "Employee access could not be removed.",
+        ),
+      );
+    setMessage(data.message || "Employee access removed.");
+    await loadMembers(selected.id);
+  }
+
+  async function deleteOrganization() {
+    if (!selected) return;
+    const confirmation = prompt(
+      `This permanently deletes ${selected.name}, its items, submissions, photos and history.\n\nType the exact organization name to continue:`,
+    );
+    if (confirmation === null) return;
+    if (confirmation !== selected.name)
+      return setMessage(
+        "Nothing was deleted. The organization name did not match.",
+      );
+    setMessage(`Deleting ${selected.name}…`);
+    const { data, error } = await requireSupabase().functions.invoke(
+      "manage-organization",
+      {
+        body: {
+          action: "delete_organization",
+          organization_id: selected.id,
+          confirmation,
+        },
+      },
+    );
+    if (error || data?.error)
+      return setMessage(
+        await functionErrorMessage(
+          data,
+          error,
+          "The organization could not be deleted.",
+        ),
+      );
+    setSelected(null);
+    setMembers([]);
+    setTab("overview");
+    setMessage(data.message || "Organization deleted.");
+    await loadOrganizations();
+  }
+
   async function review(item: Submission, decision: "approved" | "rejected") {
     const client = requireSupabase();
     let publicPath: string | null = null;
@@ -317,10 +469,13 @@ export default function AdminPage() {
         if (uploaded.error) throw uploaded.error;
       }
       if (decision === "approved") {
-        const { data: approvedRecordId, error } = await client.rpc("approve_submission", {
-          submission_id: item.id,
-          published_photo_path: publicPath,
-        });
+        const { data: approvedRecordId, error } = await client.rpc(
+          "approve_submission",
+          {
+            submission_id: item.id,
+            published_photo_path: publicPath,
+          },
+        );
         if (error) throw error;
         const requestedVisibility = item.proposed.public_visible;
         if (typeof requestedVisibility === "boolean" && approvedRecordId) {
@@ -446,9 +601,13 @@ export default function AdminPage() {
     if (!file?.size) return setMessage("Choose a CSV file first.");
     const rows = parseCsv(await file.text());
     if (!rows.length)
-      return setMessage("The CSV needs a header row and at least one item row.");
+      return setMessage(
+        "The CSV needs a header row and at least one item row.",
+      );
     const collectionId = String(form.get("collection_id") || "");
-    const collection = selected.collections.find((item) => item.id === collectionId);
+    const collection = selected.collections.find(
+      (item) => item.id === collectionId,
+    );
     if (!collection) return setMessage("Choose an item group for the import.");
     const defaultLocation = String(form.get("default_location") || "").trim();
     const defaultPublic = form.get("public_visible") === "on";
@@ -457,10 +616,18 @@ export default function AdminPage() {
       .map((row) => {
         const name = row.name || row.item_name || row.item || row.description;
         if (!name) return null;
-        const latitude = Number(row.latitude || row.lat || importPoint.latitude);
-        const longitude = Number(row.longitude || row.lng || row.lon || importPoint.longitude);
+        const latitude = Number(
+          row.latitude || row.lat || importPoint.latitude,
+        );
+        const longitude = Number(
+          row.longitude || row.lng || row.lon || importPoint.longitude,
+        );
         const quantityText = row.quantity || row.qty || row.count;
-        const publicText = (row.public || row.public_visible || "").toLowerCase();
+        const publicText = (
+          row.public ||
+          row.public_visible ||
+          ""
+        ).toLowerCase();
         return {
           organization_id: selected.id,
           collection_id: row.collection_id || collectionId,
@@ -479,10 +646,15 @@ export default function AdminPage() {
             condition: row.condition || "",
             lot_serial: row.lot_serial || row.serial || row.serial_number || "",
           },
-          quantity: quantityText === "" || quantityText == null ? null : Number(quantityText),
+          quantity:
+            quantityText === "" || quantityText == null
+              ? null
+              : Number(quantityText),
           unit: row.unit || null,
           latitude: Number.isFinite(latitude) ? latitude : importPoint.latitude,
-          longitude: Number.isFinite(longitude) ? longitude : importPoint.longitude,
+          longitude: Number.isFinite(longitude)
+            ? longitude
+            : importPoint.longitude,
           location_source: "manual_pin",
           photo_path: null,
           public_visible: publicText
@@ -676,7 +848,7 @@ export default function AdminPage() {
                 <span className="task-icon settings">⚙</span>
                 <span>
                   <b>Change organization settings</b>
-                  <small>Lists, access, AI and map</small>
+                  <small>Employees, lists, access, AI and map</small>
                 </span>
                 <i>→</i>
               </button>
@@ -942,24 +1114,87 @@ export default function AdminPage() {
             <div className="admin-title">
               <small>INVENTORY AND MAP PINS</small>
               <h1>Manage every item</h1>
-              <p>Edit details, visibility, quantities and exact map locations.</p>
+              <p>
+                Edit details, visibility, quantities and exact map locations.
+              </p>
             </div>
             {selected && (
               <details className="csv-import panel">
-                <summary><span><b>Import inventory from CSV</b><small>Create inventory records with generic map pins. Photos can be added later.</small></span><i>Open</i></summary>
+                <summary>
+                  <span>
+                    <b>Import inventory from CSV</b>
+                    <small>
+                      Create inventory records with generic map pins. Photos can
+                      be added later.
+                    </small>
+                  </span>
+                  <i>Open</i>
+                </summary>
                 <form onSubmit={importCsv}>
                   <div className="csv-import-grid">
-                    <label>CSV file<input name="csv" type="file" accept=".csv,text/csv" required /></label>
-                    <label>Item group<select name="collection_id" required>{selected.collections.map((collection) => <option key={collection.id} value={collection.id}>{collection.name}</option>)}</select></label>
-                    <label>Default named location<input name="default_location" placeholder="Row A, north yard, aisle 12" /></label>
-                    <label className="csv-public-choice"><input name="public_visible" type="checkbox" defaultChecked /><span>Show imported items publicly</span></label>
+                    <label>
+                      CSV file
+                      <input
+                        name="csv"
+                        type="file"
+                        accept=".csv,text/csv"
+                        required
+                      />
+                    </label>
+                    <label>
+                      Item group
+                      <select name="collection_id" required>
+                        {selected.collections.map((collection) => (
+                          <option key={collection.id} value={collection.id}>
+                            {collection.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label>
+                      Default named location
+                      <input
+                        name="default_location"
+                        placeholder="Row A, north yard, aisle 12"
+                      />
+                    </label>
+                    <label className="csv-public-choice">
+                      <input
+                        name="public_visible"
+                        type="checkbox"
+                        defaultChecked
+                      />
+                      <span>Show imported items publicly</span>
+                    </label>
                   </div>
                   <div className="csv-map-picker">
-                    <div><b>Pick the default pin location</b><small>Rows with latitude and longitude use their own coordinates. All other rows use this pin.</small></div>
-                    <MapView latitude={importPoint.latitude} longitude={importPoint.longitude} zoom={selected.map_zoom} picker compact onPick={(latitude, longitude) => setImportPoint({ latitude, longitude })} />
-                    <output>{importPoint.latitude.toFixed(6)}, {importPoint.longitude.toFixed(6)}</output>
+                    <div>
+                      <b>Pick the default pin location</b>
+                      <small>
+                        Rows with latitude and longitude use their own
+                        coordinates. All other rows use this pin.
+                      </small>
+                    </div>
+                    <MapView
+                      latitude={importPoint.latitude}
+                      longitude={importPoint.longitude}
+                      zoom={selected.map_zoom}
+                      picker
+                      compact
+                      onPick={(latitude, longitude) =>
+                        setImportPoint({ latitude, longitude })
+                      }
+                    />
+                    <output>
+                      {importPoint.latitude.toFixed(6)},{" "}
+                      {importPoint.longitude.toFixed(6)}
+                    </output>
                   </div>
-                  <p className="csv-columns">Recognized columns: name, description, SKU, quantity, unit, category, location, latitude, longitude, public, keywords, manufacturer, condition and serial.</p>
+                  <p className="csv-columns">
+                    Recognized columns: name, description, SKU, quantity, unit,
+                    category, location, latitude, longitude, public, keywords,
+                    manufacturer, condition and serial.
+                  </p>
                   <button className="save-button">Import inventory</button>
                 </form>
               </details>
@@ -968,23 +1203,140 @@ export default function AdminPage() {
               {records.map((item) => (
                 <details className="record-edit-card" key={item.id}>
                   <summary>
-                    <span><small>{item.category || "Uncategorized"} · {item.public_visible ? "Public" : "Employees only"}</small><b>{item.name}</b><small>{String(item.data.sku || "No SKU")} · {String(item.data.location_code || item.data.location || "No named location")}</small></span>
-                    <output>{item.quantity !== null ? `${item.quantity} ${item.unit || ""}` : "Not counted"}</output>
+                    <span>
+                      <small>
+                        {item.category || "Uncategorized"} ·{" "}
+                        {item.public_visible ? "Public" : "Employees only"}
+                      </small>
+                      <b>{item.name}</b>
+                      <small>
+                        {String(item.data.sku || "No SKU")} ·{" "}
+                        {String(
+                          item.data.location_code ||
+                            item.data.location ||
+                            "No named location",
+                        )}
+                      </small>
+                    </span>
+                    <output>
+                      {item.quantity !== null
+                        ? `${item.quantity} ${item.unit || ""}`
+                        : "Not counted"}
+                    </output>
                     <i>Edit</i>
                   </summary>
-                  <form className="record-edit-form" onSubmit={(event) => saveRecord(event, item)}>
-                    <label>Item name<input name="name" defaultValue={item.name} required /></label>
-                    <label>Item group<select name="collection_id" defaultValue={item.collection_id}>{selected?.collections.map((collection) => <option key={collection.id} value={collection.id}>{collection.name}</option>)}</select></label>
-                    <label>SKU / asset ID<input name="sku" defaultValue={String(item.data.sku || "")} /></label>
-                    <label>Category<input name="category" defaultValue={item.category} /></label>
-                    <label>Quantity<input name="quantity" type="number" step="any" min="0" defaultValue={item.quantity ?? ""} /></label>
-                    <label>Unit<input name="unit" defaultValue={item.unit || ""} placeholder="pieces, feet, cases" /></label>
-                    <label>Named location<input name="location" defaultValue={String(item.data.location_code || item.data.location || "")} placeholder="Row A, bin 12" /></label>
-                    <label>Latitude<input name="latitude" type="number" step="any" defaultValue={item.latitude} required /></label>
-                    <label>Longitude<input name="longitude" type="number" step="any" defaultValue={item.longitude} required /></label>
-                    <label className="wide-field">Description<textarea name="description" rows={4} defaultValue={item.description} /></label>
-                    <label className="visibility-choice wide-field"><input name="public_visible" type="checkbox" defaultChecked={item.public_visible} /><span><b>Show on the public site</b><small>Private items remain visible to assigned employees and administrators.</small></span></label>
-                    <div className="record-edit-actions wide-field"><button className="save-button">Save item</button><button type="button" className="danger" onClick={() => archiveRecord(item)}>Archive item</button></div>
+                  <form
+                    className="record-edit-form"
+                    onSubmit={(event) => saveRecord(event, item)}
+                  >
+                    <label>
+                      Item name
+                      <input name="name" defaultValue={item.name} required />
+                    </label>
+                    <label>
+                      Item group
+                      <select
+                        name="collection_id"
+                        defaultValue={item.collection_id}
+                      >
+                        {selected?.collections.map((collection) => (
+                          <option key={collection.id} value={collection.id}>
+                            {collection.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label>
+                      SKU / asset ID
+                      <input
+                        name="sku"
+                        defaultValue={String(item.data.sku || "")}
+                      />
+                    </label>
+                    <label>
+                      Category
+                      <input name="category" defaultValue={item.category} />
+                    </label>
+                    <label>
+                      Quantity
+                      <input
+                        name="quantity"
+                        type="number"
+                        step="any"
+                        min="0"
+                        defaultValue={item.quantity ?? ""}
+                      />
+                    </label>
+                    <label>
+                      Unit
+                      <input
+                        name="unit"
+                        defaultValue={item.unit || ""}
+                        placeholder="pieces, feet, cases"
+                      />
+                    </label>
+                    <label>
+                      Named location
+                      <input
+                        name="location"
+                        defaultValue={String(
+                          item.data.location_code || item.data.location || "",
+                        )}
+                        placeholder="Row A, bin 12"
+                      />
+                    </label>
+                    <label>
+                      Latitude
+                      <input
+                        name="latitude"
+                        type="number"
+                        step="any"
+                        defaultValue={item.latitude}
+                        required
+                      />
+                    </label>
+                    <label>
+                      Longitude
+                      <input
+                        name="longitude"
+                        type="number"
+                        step="any"
+                        defaultValue={item.longitude}
+                        required
+                      />
+                    </label>
+                    <label className="wide-field">
+                      Description
+                      <textarea
+                        name="description"
+                        rows={4}
+                        defaultValue={item.description}
+                      />
+                    </label>
+                    <label className="visibility-choice wide-field">
+                      <input
+                        name="public_visible"
+                        type="checkbox"
+                        defaultChecked={item.public_visible}
+                      />
+                      <span>
+                        <b>Show on the public site</b>
+                        <small>
+                          Private items remain visible to assigned employees and
+                          administrators.
+                        </small>
+                      </span>
+                    </label>
+                    <div className="record-edit-actions wide-field">
+                      <button className="save-button">Save item</button>
+                      <button
+                        type="button"
+                        className="danger"
+                        onClick={() => archiveRecord(item)}
+                      >
+                        Archive item
+                      </button>
+                    </div>
                   </form>
                 </details>
               ))}
@@ -1006,19 +1358,49 @@ export default function AdminPage() {
               <p>See the words, photos and filters people use to find items.</p>
             </div>
             <div className="search-activity-summary">
-              <article><small>Total searches</small><b>{searches.length}</b></article>
-              <article><small>Photo searches</small><b>{searches.filter((item) => item.search_type === "image").length}</b></article>
-              <article><small>No-result searches</small><b>{searches.filter((item) => item.result_count === 0).length}</b></article>
+              <article>
+                <small>Total searches</small>
+                <b>{searches.length}</b>
+              </article>
+              <article>
+                <small>Photo searches</small>
+                <b>
+                  {
+                    searches.filter((item) => item.search_type === "image")
+                      .length
+                  }
+                </b>
+              </article>
+              <article>
+                <small>No-result searches</small>
+                <b>
+                  {searches.filter((item) => item.result_count === 0).length}
+                </b>
+              </article>
             </div>
             <div className="search-activity-list">
               {searches.map((item) => (
                 <article key={item.id}>
-                  <span className={`search-kind ${item.search_type}`}>{item.search_type}</span>
-                  <div><b>{item.query}</b><small>{new Date(item.created_at).toLocaleString()} · {item.result_count} results</small></div>
+                  <span className={`search-kind ${item.search_type}`}>
+                    {item.search_type}
+                  </span>
+                  <div>
+                    <b>{item.query}</b>
+                    <small>
+                      {new Date(item.created_at).toLocaleString()} ·{" "}
+                      {item.result_count} results
+                    </small>
+                  </div>
                   {item.result_count === 0 && <strong>Needs attention</strong>}
                 </article>
               ))}
-              {!searches.length && <div className="admin-list-empty"><span>⌕</span><h2>No searches yet</h2><p>Public and employee searches will appear here.</p></div>}
+              {!searches.length && (
+                <div className="admin-list-empty">
+                  <span>⌕</span>
+                  <h2>No searches yet</h2>
+                  <p>Public and employee searches will appear here.</p>
+                </div>
+              )}
             </div>
           </>
         )}
@@ -1028,8 +1410,7 @@ export default function AdminPage() {
             <h1>No organization to configure</h1>
             <p>
               Create an organization first. Its item groups, fields, public
-              access, AI options and map are all set
-              in the guided setup.
+              access, AI options and map are all set in the guided setup.
             </p>
             {isPlatformAdmin ? (
               <button onClick={() => setTab("create")}>
@@ -1062,10 +1443,104 @@ export default function AdminPage() {
                   value={editCollections}
                   onChange={setEditCollections}
                 />
+                <div className="schema-note">
+                  <b>No database work is required.</b>
+                  <span>
+                    Material Pin stores these field definitions and their values
+                    flexibly. New forms use the saved fields; existing items
+                    stay valid until someone fills in the new information.
+                  </span>
+                </div>
               </div>
             </section>
             <section className="settings-section">
               <div className="settings-step">2</div>
+              <div className="settings-content">
+                <h2>Employees and administrators</h2>
+                <p>
+                  Create a login, assign it to this organization, or remove
+                  access.
+                </p>
+                <form
+                  className="employee-create-form"
+                  onSubmit={createEmployee}
+                >
+                  <label>
+                    Employee email
+                    <input
+                      name="employee_email"
+                      type="email"
+                      autoComplete="off"
+                      placeholder="employee@company.com"
+                      required
+                    />
+                  </label>
+                  <label>
+                    Temporary password
+                    <input
+                      name="temporary_password"
+                      type="password"
+                      minLength={10}
+                      autoComplete="new-password"
+                      placeholder="At least 10 characters"
+                    />
+                    <small>
+                      Required only when this is a brand-new account.
+                    </small>
+                  </label>
+                  <label>
+                    Access level
+                    <select name="employee_role" defaultValue="staff">
+                      <option value="staff">
+                        Employee — add and update items
+                      </option>
+                      <option value="admin">
+                        Administrator — manage everything
+                      </option>
+                    </select>
+                  </label>
+                  <button className="save-button">
+                    Create or assign login
+                  </button>
+                </form>
+                <div className="employee-list">
+                  {members.map((member) => (
+                    <article key={member.user_id}>
+                      <span>
+                        <b>{member.email}</b>
+                        <small>
+                          {member.is_owner
+                            ? "Organization owner"
+                            : member.role === "admin"
+                              ? "Administrator"
+                              : "Employee"}
+                          {member.user_id === session?.user?.id ? " · You" : ""}
+                        </small>
+                      </span>
+                      {!member.is_owner &&
+                        member.user_id !== session?.user?.id && (
+                          <button
+                            type="button"
+                            onClick={() => removeMember(member)}
+                          >
+                            Remove access
+                          </button>
+                        )}
+                    </article>
+                  ))}
+                  {membersLoading && <p>Loading employee accounts…</p>}
+                  {!membersLoading && !members.length && (
+                    <p>No employee accounts are assigned yet.</p>
+                  )}
+                </div>
+                <p className="employee-password-note">
+                  Give a new employee their temporary password privately. They
+                  can change it from the Employee page after signing in.
+                </p>
+              </div>
+            </section>
+            <section className="settings-section">
+              <div className="settings-step">3</div>
               <div className="settings-content">
                 <h2>Access and photo help</h2>
                 <p>Choose who can open the site and how photos are reviewed.</p>
@@ -1116,11 +1591,27 @@ export default function AdminPage() {
               </div>
             </section>
             <section className="settings-section map-settings-section">
-              <div className="settings-step">3</div>
+              <div className="settings-step">4</div>
               <div className="settings-content">
                 <OrganizationMapEditor value={editMap} onChange={setEditMap} />
               </div>
             </section>
+            {(isPlatformAdmin || selected.created_by === session?.user?.id) && (
+              <section className="organization-danger-zone">
+                <div>
+                  <small>PERMANENT ACTION</small>
+                  <h2>Delete this organization</h2>
+                  <p>
+                    Deletes its items, submissions, employee assignments, photos
+                    and history. Other organizations and login accounts are not
+                    deleted.
+                  </p>
+                </div>
+                <button type="button" onClick={deleteOrganization}>
+                  Delete {selected.name}
+                </button>
+              </section>
+            )}
             <div className="settings-save-bar">
               <span>Changes are not live until you save.</span>
               <button className="save-button" onClick={saveConfiguration}>
@@ -1197,11 +1688,27 @@ export default function AdminPage() {
                 />
                 <label className="access-setting panel">
                   <input name="ai_enabled" type="checkbox" defaultChecked />
-                  <span><b>Enable photo descriptions and photo search</b><small>The OpenAI API is called only when someone uses a photo feature.</small></span>
+                  <span>
+                    <b>Enable photo descriptions and photo search</b>
+                    <small>
+                      The OpenAI API is called only when someone uses a photo
+                      feature.
+                    </small>
+                  </span>
                 </label>
                 <label className="catalog-guide-field panel">
-                  <span><b>AI catalog guide</b><small>Give the AI the real vocabulary used by this organization.</small></span>
-                  <textarea name="ai_catalog_context" rows={7} maxLength={4000} placeholder="Example: Vehicle salvage yard. Identify vehicle type, make/model clues, body panels, engines, wheels, major components and visible condition. Use stock numbers when readable. Do not guess VIN digits." />
+                  <span>
+                    <b>AI catalog guide</b>
+                    <small>
+                      Give the AI the real vocabulary used by this organization.
+                    </small>
+                  </span>
+                  <textarea
+                    name="ai_catalog_context"
+                    rows={7}
+                    maxLength={4000}
+                    placeholder="Example: Vehicle salvage yard. Identify vehicle type, make/model clues, body panels, engines, wheels, major components and visible condition. Use stock numbers when readable. Do not guess VIN digits."
+                  />
                 </label>
               </section>
               <section className="create-step">

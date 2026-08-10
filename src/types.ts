@@ -37,6 +37,7 @@ export type Organization = {
   collections: CollectionDefinition[];
   ai_enabled: boolean;
   ai_catalog_context: string;
+  created_by: string;
   created_at: string;
 };
 

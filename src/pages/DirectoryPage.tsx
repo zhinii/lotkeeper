@@ -483,11 +483,6 @@ export default function DirectoryPage({ slug }: { slug: string }) {
 
           <div className="material-results-heading">
             <h2>{visibleRecords.length} results</h2>
-            {isMember && (
-              <button onClick={() => navigate(`submit/${organization.slug}`)}>
-                + Add item
-              </button>
-            )}
           </div>
           <div className="material-result-list">
             {visibleRecords.map((item) => (
@@ -673,6 +668,16 @@ export default function DirectoryPage({ slug }: { slug: string }) {
             </div>
           </article>
         </div>
+      )}
+      {isMember && !detailOpen && (
+        <button
+          className="floating-add"
+          onClick={() => navigate(`submit/${organization.slug}`)}
+          aria-label="Add a new item"
+        >
+          <span aria-hidden="true">+</span>
+          <strong>Add item</strong>
+        </button>
       )}
       {message && (
         <div className="directory-toast" role="status">

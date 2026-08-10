@@ -1,6 +1,11 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { gps as readGps, parse as readExif } from "exifr";
 import MapView from "../components/MapView";
+import PhotoCropper, {
+  cropPhoto,
+  defaultCrop,
+  type CropSelection,
+} from "../components/PhotoCropper";
 import {
   commercialCaptureFields,
   commercialCaptureKeys,
@@ -26,7 +31,7 @@ type Point = {
   source: LocationSource;
 };
 
-type SubmissionStep = "photo" | "review" | "complete";
+type SubmissionStep = "photo" | "crop" | "review" | "complete";
 type AnalysisState = "idle" | "analyzing" | "complete" | "unavailable";
 
 type EnrichmentResponse = {
@@ -164,6 +169,9 @@ export default function SubmitPage({
     emptyCommercialCaptureData(),
   );
   const [customData, setCustomData] = useState<Record<string, string>>({});
+  const [sourcePhoto, setSourcePhoto] = useState<File | null>(null);
+  const [crop, setCrop] = useState<CropSelection>(defaultCrop);
+  const [cropReady, setCropReady] = useState(false);
   const [photo, setPhoto] = useState<File | null>(null);
   const [preparedPhoto, setPreparedPhoto] = useState<PreparedPhoto | null>(
     null,
@@ -180,6 +188,7 @@ export default function SubmitPage({
   const [aiSuggestions, setAiSuggestions] = useState<
     Submission["ai_suggestions"] | null
   >(null);
+  const metadataPromise = useRef<Promise<Point | null> | null>(null);
 
   useEffect(() => {
     (async () => {
@@ -332,45 +341,72 @@ export default function SubmitPage({
     }
   }
 
-  async function selectPhoto(file: File | null) {
+  async function readPhotoLocation(file: File) {
+    const [coordinates, metadata] = await Promise.all([
+      readGps(file).catch(() => null),
+      readExif(file, ["DateTimeOriginal", "CreateDate"]).catch(() => null),
+    ]);
+    const captured = metadata?.DateTimeOriginal || metadata?.CreateDate;
+    const fileDate = new Date(file.lastModified);
+    setPhotoTakenAt(
+      captured instanceof Date && !Number.isNaN(captured.getTime())
+        ? captured.toISOString()
+        : file.lastModified > 0 && !Number.isNaN(fileDate.getTime())
+          ? fileDate.toISOString()
+          : new Date().toISOString(),
+    );
+    if (coordinates?.latitude != null && coordinates?.longitude != null) {
+      const exifPoint: Point = {
+        lat: coordinates.latitude,
+        lng: coordinates.longitude,
+        accuracy: null,
+        source: "photo_exif",
+      };
+      setPoint(exifPoint);
+      return exifPoint;
+    }
+    const current = await browserLocation();
+    if (current) setPoint(current);
+    return current;
+  }
+
+  function selectPhoto(file: File | null) {
     if (!file || !organization) return;
-    setPhoto(file);
+    setSourcePhoto(file);
+    setCrop(defaultCrop);
+    setCropReady(false);
+    setPhoto(null);
     setPreparedPhoto(null);
     setPhotoTakenAt(null);
     setPoint(null);
     setAiSuggestions(null);
     setAnalysisState("idle");
+    setPreparing(false);
+    setStatus("Crop the photo so the item is clear.");
+    metadataPromise.current = readPhotoLocation(file);
+    setStep("crop");
+  }
+
+  async function confirmCrop() {
+    if (!sourcePhoto || !organization) return;
     setPreparing(true);
+    setStatus("Cropping and preparing the photo...");
+    let file: File;
+    try {
+      file = await cropPhoto(sourcePhoto, crop);
+    } catch {
+      setPreparing(false);
+      setStep("crop");
+      setStatus("This photo could not be cropped. Try another photo.");
+      return;
+    }
+    setPhoto(file);
+    setPreparedPhoto(null);
+    setAiSuggestions(null);
+    setAnalysisState("idle");
     setStatus("Preparing a smaller photo…");
 
-    const metadataTask = (async () => {
-      const [coordinates, metadata] = await Promise.all([
-        readGps(file).catch(() => null),
-        readExif(file, ["DateTimeOriginal", "CreateDate"]).catch(() => null),
-      ]);
-      const captured = metadata?.DateTimeOriginal || metadata?.CreateDate;
-      const fileDate = new Date(file.lastModified);
-      setPhotoTakenAt(
-        captured instanceof Date && !Number.isNaN(captured.getTime())
-          ? captured.toISOString()
-          : file.lastModified > 0 && !Number.isNaN(fileDate.getTime())
-            ? fileDate.toISOString()
-            : new Date().toISOString(),
-      );
-      if (coordinates?.latitude != null && coordinates?.longitude != null) {
-        const exifPoint: Point = {
-          lat: coordinates.latitude,
-          lng: coordinates.longitude,
-          accuracy: null,
-          source: "photo_exif",
-        };
-        setPoint(exifPoint);
-        return exifPoint;
-      }
-      const current = await browserLocation();
-      if (current) setPoint(current);
-      return current;
-    })();
+    const metadataTask = metadataPromise.current || Promise.resolve(null);
 
     const analysisTask = prepareSubmissionPhoto(file).then(async (prepared) => {
       setPreparedPhoto(prepared);
@@ -601,6 +637,59 @@ export default function SubmitPage({
       </div>
     );
 
+  if (step === "crop" && sourcePhoto)
+    return (
+      <div className="submission-page submission-flow-page">
+        <header className="topbar submission-topbar">
+          <button className="brand-button" onClick={() => setStep("photo")}>
+            <b>BACK</b>
+            <span>{organization.name}</span>
+          </button>
+          <button onClick={() => navigate(`org/${organization.slug}`)}>
+            Cancel
+          </button>
+        </header>
+        <main className="capture-first crop-step">
+          <div className="submission-progress" aria-label="Step 2 of 3">
+            <i>✓</i>
+            <span />
+            <b>2</b>
+            <span />
+            <i>3</i>
+          </div>
+          <section className="capture-intro">
+            <small>FOCUS THE PHOTO</small>
+            <h1>Crop to the item</h1>
+            <p>
+              Zoom and reposition the photo so the item you are adding is clear.
+              Only the area inside the frame will be analyzed and saved.
+            </p>
+          </section>
+          <section className="crop-panel" aria-busy={preparing}>
+            <PhotoCropper
+              file={sourcePhoto}
+              crop={crop}
+              onChange={setCrop}
+              onReadyChange={setCropReady}
+            />
+            <div className="crop-step-actions">
+              <button type="button" onClick={() => setCrop(defaultCrop)}>
+                Reset crop
+              </button>
+              <button
+                type="button"
+                className="crop-confirm"
+                disabled={preparing || !cropReady}
+                onClick={() => void confirmCrop()}
+              >
+                {preparing ? "Preparing..." : "Use this crop"}
+              </button>
+            </div>
+          </section>
+        </main>
+      </div>
+    );
+
   if (step === "photo")
     return (
       <div className="submission-page submission-flow-page">
@@ -617,10 +706,12 @@ export default function SubmitPage({
           </button>
         </header>
         <main className="capture-first">
-          <div className="submission-progress" aria-label="Submission progress">
+          <div className="submission-progress" aria-label="Step 1 of 3">
             <b>1</b>
             <span />
             <i>2</i>
+            <span />
+            <i>3</i>
           </div>
           <section className="capture-intro">
             <small>{recordId ? "UPDATE AN ENTRY" : "ADD TO THE MAP"}</small>
@@ -717,10 +808,12 @@ export default function SubmitPage({
         </button>
       </header>
       <main className="submission-review">
-        <div className="submission-progress" aria-label="Submission progress">
+        <div className="submission-progress" aria-label="Step 3 of 3">
           <i>✓</i>
           <span />
-          <b>2</b>
+          <i>✓</i>
+          <span />
+          <b>3</b>
         </div>
         <div className="review-heading">
           <small>REVIEW BEFORE SENDING</small>

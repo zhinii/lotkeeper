@@ -1,211 +1,125 @@
-import { FormEvent, useEffect, useState } from "react";
-import AdminConsole from "./components/AdminConsole";
-import ContributionForm from "./components/ContributionForm";
-import Directory from "./components/Directory";
-import { db, getSession, signIn } from "./lib/supabase";
-import type { Instance } from "./types";
-import { definitions } from "./lib/modules";
+import { useEffect, useState } from "react";
+import AdminPage from "./pages/AdminPage";
+import DirectoryPage from "./pages/DirectoryPage";
+import SubmitPage from "./pages/SubmitPage";
+import { configured, requireSupabase } from "./lib/supabase";
+import { navigate, routeFromHash } from "./lib/route";
+import type { Organization } from "./types";
 
-function routeFromHash() {
-  return location.hash.replace(/^#\/?/, "") || "home";
+function SetupPage() {
+  return (
+    <main className="setup-page">
+      <div className="brand">
+        LOTKEEPER <span>V2</span>
+      </div>
+      <h1>Connect the dedicated database</h1>
+      <p>
+        This clean rebuild intentionally contains no fallback credentials. Add
+        the new Lotkeeper Supabase URL and publishable key to the deployment
+        environment.
+      </p>
+      <code>
+        VITE_SUPABASE_URL
+        <br />
+        VITE_SUPABASE_ANON_KEY
+      </code>
+      <p>Page Steel remains isolated and untouched.</p>
+    </main>
+  );
 }
 
-function Home({ navigate }: { navigate: (route: string) => void }) {
-  const [instances, setInstances] = useState<Instance[]>([]);
+function HomePage() {
+  const [organizations, setOrganizations] = useState<Organization[]>([]);
   const [query, setQuery] = useState("");
   useEffect(() => {
-    db<Instance[]>("instances", "access_mode=eq.public&select=*&order=name")
-      .then(setInstances)
-      .catch(() => setInstances([]));
+    requireSupabase()
+      .from("organizations")
+      .select("*")
+      .eq("public_access", true)
+      .order("name")
+      .then(({ data }) => setOrganizations((data || []) as Organization[]));
   }, []);
-  const visible = instances.filter((item) =>
-    `${item.name} ${item.site_name}`
-      .toLowerCase()
-      .includes(query.toLowerCase()),
+  const visible = organizations.filter((item) =>
+    `${item.name} ${item.mode}`.toLowerCase().includes(query.toLowerCase()),
   );
   return (
-    <div className="landing">
-      <header className="landing-header">
-        <div className="wordmark">
-          <b>LOTKEEPER</b>
-          <span>Location-aware operations</span>
-        </div>
-        <button onClick={() => navigate("admin")}>Administrator console</button>
+    <div className="home-page">
+      <header className="topbar">
+        <div className="brand">LOTKEEPER</div>
+        <button onClick={() => navigate("admin")}>Admin</button>
       </header>
-      <main>
-        <section className="landing-search">
-          <small>FIND AN ORGANIZATION OR SITE</small>
-          <h1>
-            Find what is there.
-            <br />
-            Know exactly where.
-          </h1>
-          <div>
-            <input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search organizations and sites"
-            />
-            <button>Search</button>
-          </div>
-          <p>
-            A practical directory for mapped places, durable assets, managed
-            stock, loose material, and staff-approved public knowledge.
-          </p>
-        </section>
-        <section className="instance-directory">
-          <div className="section-title">
-            <h2>Available organizations</h2>
-            <span>{visible.length} public instances</span>
-          </div>
-          {!visible.length && (
-            <div className="empty">
-              <h2>No public instances yet</h2>
-              <p>
-                Administrators can create the first deployment from the console.
-              </p>
+      <section className="hero">
+        <p>VISUAL LOCATION + INVENTORY FINDER</p>
+        <h1>
+          Find what is there.
+          <br />
+          Know where it is.
+        </h1>
+        <div className="hero-search">
+          <input
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Search organizations"
+          />
+          <button>Search</button>
+        </div>
+        <small>
+          Purpose-built for civic spaces, commercial sites, equipment, material
+          and inventory.
+        </small>
+      </section>
+      <main className="organization-list">
+        <div className="section-heading">
+          <h2>Organizations</h2>
+          <span>{visible.length} available</span>
+        </div>
+        {visible.map((organization) => (
+          <button
+            className="organization-card"
+            key={organization.id}
+            onClick={() => navigate(`org/${organization.slug}`)}
+          >
+            <span className={`mode-badge ${organization.mode}`}>
+              {organization.mode}
+            </span>
+            <div>
+              <strong>{organization.name}</strong>
+              <small>
+                {organization.collections
+                  .filter(
+                    (item) =>
+                      item.publicVisible || organization.mode === "commercial",
+                  )
+                  .map((item) => item.name)
+                  .join(" · ")}
+              </small>
             </div>
-          )}
-          <div className="instance-grid">
-            {visible.map((instance) => (
-              <button
-                key={instance.id}
-                onClick={() => navigate(`site/${instance.slug}`)}
-              >
-                <span className="instance-initials">
-                  {instance.name
-                    .split(/\s+/)
-                    .map((part) => part[0])
-                    .join("")
-                    .slice(0, 3)}
-                </span>
-                <span>
-                  <small>{instance.site_name}</small>
-                  <strong>{instance.name}</strong>
-                  <em>
-                    {definitions(instance)
-                      .filter((module) => module.public_visible)
-                      .map((module) => module.name)
-                      .join(" · ")}
-                  </em>
-                </span>
-                <b>Open →</b>
-              </button>
-            ))}
+            <b>Open →</b>
+          </button>
+        ))}
+        {!visible.length && (
+          <div className="empty">
+            <h2>No organizations yet</h2>
+            <p>Create the first organization from the admin console.</p>
           </div>
-        </section>
-        <section className="principles">
-          <article>
-            <b>01</b>
-            <h2>Search first</h2>
-            <p>
-              Codes, names, categories, descriptions, quantities, and physical
-              locations are immediately searchable.
-            </p>
-          </article>
-          <article>
-            <b>02</b>
-            <h2>One map</h2>
-            <p>
-              Places, assets, stock, and loose material share a consistent site
-              map without being treated as the same thing.
-            </p>
-          </article>
-          <article>
-            <b>03</b>
-            <h2>Controlled contributions</h2>
-            <p>
-              Visitors can contribute photos and GPS pins, but administrators
-              remain responsible for published information.
-            </p>
-          </article>
-        </section>
+        )}
       </main>
-    </div>
-  );
-}
-
-function Access({
-  slug,
-  navigate,
-}: {
-  slug: string;
-  navigate: (route: string) => void;
-}) {
-  const [message, setMessage] = useState(
-    "This instance is private. Sign in with an assigned account.",
-  );
-  async function login(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const form = new FormData(event.currentTarget);
-    try {
-      await signIn(String(form.get("email")), String(form.get("password")));
-      navigate(`site/${slug}`);
-      location.reload();
-    } catch (e) {
-      setMessage(e instanceof Error ? e.message : "Sign-in failed.");
-    }
-  }
-  return (
-    <div className="login-page">
-      <form onSubmit={login}>
-        <b className="login-brand">PRIVATE LOTKEEPER INSTANCE</b>
-        <h1>Access required</h1>
-        <p>{message}</p>
-        <label>
-          Email
-          <input name="email" type="email" required />
-        </label>
-        <label>
-          Password
-          <input name="password" type="password" required />
-        </label>
-        <button>Sign in</button>
-        <button
-          type="button"
-          className="text-button"
-          onClick={() => navigate("home")}
-        >
-          Return home
-        </button>
-      </form>
     </div>
   );
 }
 
 export default function App() {
   const [route, setRoute] = useState(routeFromHash());
-  const [instance, setInstance] = useState<Instance | null>(null);
-  const [loading, setLoading] = useState(false);
   useEffect(() => {
     const change = () => setRoute(routeFromHash());
     addEventListener("hashchange", change);
     return () => removeEventListener("hashchange", change);
   }, []);
-  const navigate = (next: string) => {
-    location.hash = `#/${next}`;
-    setRoute(next);
-  };
-  const [kind, slug] = route.split("/");
-  useEffect(() => {
-    if (!slug || !["site", "contribute"].includes(kind)) {
-      setInstance(null);
-      return;
-    }
-    setLoading(true);
-    db<Instance[]>("instances", `slug=eq.${encodeURIComponent(slug)}&select=*`)
-      .then((rows) => setInstance(rows[0] || null))
-      .finally(() => setLoading(false));
-  }, [kind, slug, getSession()?.access_token]);
-  if (route === "admin") return <AdminConsole navigate={navigate} />;
-  if (kind === "site" || kind === "contribute") {
-    if (loading) return <div className="full-loading">Loading instance…</div>;
-    if (!instance) return <Access slug={slug} navigate={navigate} />;
-    return kind === "site" ? (
-      <Directory instance={instance} navigate={navigate} />
-    ) : (
-      <ContributionForm instance={instance} navigate={navigate} />
-    );
-  }
-  return <Home navigate={navigate} />;
+  if (!configured) return <SetupPage />;
+  const parts = route.split("/");
+  if (parts[0] === "admin") return <AdminPage />;
+  if (parts[0] === "org" && parts[1]) return <DirectoryPage slug={parts[1]} />;
+  if (parts[0] === "submit" && parts[1])
+    return <SubmitPage slug={parts[1]} recordId={parts[2] || null} />;
+  return <HomePage />;
 }

@@ -1,85 +1,103 @@
-export type ModuleKey = string;
+export type OrganizationMode = "civic" | "commercial";
+export type LocationSource = "photo_exif" | "browser_gps" | "manual_pin";
 export type FieldType = "text" | "number" | "date" | "boolean";
-export type ModuleField = {
+
+export type FieldDefinition = {
   key: string;
   label: string;
   type: FieldType;
-  public_visible: boolean;
-  public_submit: boolean;
   required: boolean;
-};
-export type ModuleDefinition = {
-  id: string;
-  name: string;
-  public_visible: boolean;
-  public_submit: boolean;
-  fields: ModuleField[];
+  publicVisible: boolean;
+  publicSubmit: boolean;
+  searchable: boolean;
 };
 
-export type Instance = {
+export type CollectionDefinition = {
   id: string;
   name: string;
+  icon: string;
+  kind: "place" | "persistent" | "consumable";
+  publicVisible: boolean;
+  publicSubmit: boolean;
+  fields: FieldDefinition[];
+};
+
+export type Organization = {
+  id: string;
   slug: string;
-  site_name: string;
-  access_mode: "public" | "private";
-  modules: ModuleKey[];
-  terminology: Record<string, string>;
-  module_definitions: ModuleDefinition[];
-  latitude: number;
-  longitude: number;
+  name: string;
+  mode: OrganizationMode;
+  public_access: boolean;
+  center_lat: number;
+  center_lng: number;
   map_zoom: number;
   boundary: [number, number][];
-  created_by: string;
+  collections: CollectionDefinition[];
+  ai_enabled: boolean;
   created_at: string;
 };
 
 export type RecordItem = {
   id: string;
-  instance_id: string;
-  record_type: ModuleKey;
+  organization_id: string;
+  collection_id: string;
   name: string;
-  code: string | null;
+  description: string;
+  keywords: string[];
   category: string;
-  description: string | null;
-  status: string;
+  data: Record<string, unknown>;
   quantity: number | null;
   unit: string | null;
-  location_label: string | null;
   latitude: number;
   longitude: number;
-  photo_path: string | null;
+  location_source: LocationSource;
+  photo_path: string;
+  photo_taken_at: string | null;
+  status: "active" | "archived" | "removed";
   public_visible: boolean;
-  data: Record<string, unknown>;
-  updated_by_email: string | null;
+  version: number;
   updated_at: string;
+  updated_by: string | null;
 };
 
 export type Submission = {
   id: string;
-  instance_id: string;
-  submission_type: "new_record" | "stock_change";
-  record_type: ModuleKey;
-  item_name: string;
-  category: string;
-  description: string | null;
-  quantity: number | null;
-  quantity_unit: string | null;
+  organization_id: string;
+  submission_type: "new" | "update";
+  target_record_id: string | null;
+  collection_id: string;
+  proposed: Partial<RecordItem> & {
+    name: string;
+    description: string;
+    data: Record<string, unknown>;
+  };
+  photo_path: string | null;
   latitude: number;
   longitude: number;
+  location_source: LocationSource;
   gps_accuracy: number | null;
-  contact_name: string | null;
-  contact_method: string | null;
-  contact_value: string | null;
-  data: Record<string, unknown>;
-  photo_path: string;
-  status: "pending" | "approved" | "rejected";
-  submitted_at: string;
   photo_taken_at: string | null;
-  location_source: "photo_exif" | "browser_gps" | "manual_pin";
+  submitted_at: string;
+  submitted_by: string | null;
+  status: "pending" | "approved" | "rejected";
+  ai_status: "not_requested" | "queued" | "processing" | "complete" | "failed";
+  ai_suggestions: {
+    description?: string;
+    category?: string;
+    keywords?: string[];
+    search_terms?: string[];
+    warnings?: string[];
+    error?: string;
+  };
 };
 
-export type Session = {
-  access_token: string;
-  refresh_token: string;
-  user: { id: string; email: string };
+export type AlertItem = {
+  id: string;
+  organization_id: string;
+  alert_type: string;
+  title: string;
+  detail: string;
+  record_id: string | null;
+  status: "open" | "resolved";
+  created_at: string;
 };

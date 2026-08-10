@@ -1,85 +1,57 @@
-# Lotkeeper
+# Lotkeeper V2
 
-Lotkeeper is a multi-organization, location-aware catalog and operations application hosted on GitHub Pages and backed by Supabase.
+Lotkeeper is a mobile-first visual location and inventory finder for civic and commercial spaces. It joins photographs, map pins, descriptions, searchable fields and accountable activity in one system.
 
-One static deployment can provide independently configured instances for material yards, vehicle lots, warehouses, stores, parks, attractions, and other large physical sites.
+## What it supports
 
-## Capabilities
+- **Civic deployments:** public maps, account-free photo submissions, EXIF GPS or browser GPS, manual pin correction, administrator approval/rejection, and reviewed updates to existing records.
+- **Commercial deployments:** private or public sites, custom collections, persistent assets, consumable inventory, quantities and units, search logging, inventory-use transactions, and administrator alerts.
+- **Every deployment:** organization branding, configurable opening map and boundary, configurable modules and fields, field-level public/private storage, responsive map/list search, record history, and resolved-alert reopening.
+- **Optional AI:** server-side image suggestions for descriptions, categories and search terms. AI is off by default, limited per organization, and never publishes without administrator review.
 
-- Admin console for creating organization instances.
-- Public or member-only access per instance.
-- Selectable Places, Assets, Stock, and Loose Material modules.
-- Custom terminology for each organization.
-- Search-first catalog with categories, codes, quantities, locations, photos, and an interactive map.
-- Browser photo capture, high-accuracy GPS, and manual pin correction.
-- Anonymous public contributions that remain private until approved.
-- Staff-only contributor contact information.
-- Approval/rejection queue and audited stock-removal reports.
-- Supabase Auth, Postgres row-level security, and Storage.
+## What V2 does not include yet
+
+- Reservations, ticketing, payments, purchasing or full ERP/accounting functions.
+- Automatic inventory reconciliation with external POS/ERP systems.
+- Turn-by-turn navigation, offline maps or native mobile apps.
+- A no-code user invitation screen; initial users are created/invited through Supabase Authentication.
+- Guaranteed image identification. AI suggestions are search metadata and must be reviewed by a person.
 
 ## Architecture
 
-GitHub Pages hosts one static React application. Organization deployments are database-backed instances reached through hash URLs such as:
+- React + TypeScript + Vite on GitHub Pages.
+- MapLibre with OpenStreetMap raster tiles.
+- A dedicated Supabase project for Postgres, Authentication, Storage, RLS and the image-enrichment Edge Function.
+- OpenAI image understanding runs only inside the Edge Function. The browser never receives `OPENAI_API_KEY` or a Supabase service key.
 
-```text
-https://OWNER.github.io/REPOSITORY/#/site/page-steel
-https://OWNER.github.io/REPOSITORY/#/site/example-park
-https://OWNER.github.io/REPOSITORY/#/admin
-```
+Page Steel remains a separate archived application and database. Lotkeeper deployments share the dedicated Lotkeeper database by default and are isolated by `organization_id` plus row-level security. A private paid deployment can instead use its own Supabase project with the same schema.
 
-This avoids maintaining a separate code copy for every customer. Each instance stores its own name, slug, site name, public/private access, enabled modules, labels, and initial map position.
+## Local setup
 
-Public examples use the shared database with row-level separation. Paid or contractually private customers can receive a dedicated Supabase project and deployment. See [`docs/deployment-models.md`](docs/deployment-models.md) for the retained provisioning and closure process.
+1. Install dependencies with `pnpm install`.
+2. Create a separate Supabase project.
+3. Run [`supabase/schema.sql`](supabase/schema.sql) once in that project's SQL Editor.
+4. Copy `.env.example` to `.env.local` and add the project's URL and publishable key.
+5. Run `pnpm dev`.
 
-## One-time Supabase setup
+Do not place `OPENAI_API_KEY` in any `VITE_` variable. Deploy [`supabase/functions/enrich-submission/index.ts`](supabase/functions/enrich-submission/index.ts) as `enrich-submission`, turn legacy JWT verification off, and save `OPENAI_API_KEY` as an encrypted Edge Function secret. The implementation uses low-detail image input and Structured Outputs supported by the [OpenAI Images and Vision guide](https://developers.openai.com/api/docs/guides/images-vision) and [Structured Outputs guide](https://developers.openai.com/api/docs/guides/structured-outputs).
 
-This repository is configured to use the existing Page Steel Supabase project through its public publishable key. No service-role secret belongs in this repository.
+## GitHub Pages
 
-1. Open the Supabase project.
-2. Open **SQL Editor**.
-3. Run the complete file `supabase/lotkeeper-schema.sql`.
-4. Open **Authentication → Users** and create the first administrator account.
-5. Open the deployed application at `#/admin` and sign in.
-6. Create the first organization instance.
+Set these repository variables:
 
-The SQL creates tables, indexes, storage buckets, and row-level security policies. Public users may only read public instances and approved records. Submission contact information and pending photographs are restricted to instance administrators.
+- `VITE_SUPABASE_URL`
+- `VITE_SUPABASE_ANON_KEY`
 
-Existing Lotkeeper databases created before boundary drawing was introduced can run the smaller additive upgrade at `supabase/instance-boundary-upgrade.sql` instead of repeating the complete schema.
+Then enable **Settings → Pages → Source: GitHub Actions**. Pushes to `main` run tests, build the relative-path Vite bundle and deploy Pages.
 
-## Local use with PowerShell
+## Database safety
 
-```powershell
-pnpm install
-pnpm run dev
-```
+Public field values live in `records.data`. Private values live in the separate `record_private_data` table and are readable only by organization members. Public submissions enter `submissions` as `pending`; approval is performed by a security-definer database function after an administrator review. Storage uses separate private submission and public approved-image buckets.
 
-Production check:
+Run checks with:
 
 ```powershell
-pnpm run build
 pnpm test
+pnpm build
 ```
-
-## GitHub Pages deployment
-
-The workflow at `.github/workflows/pages.yml` builds and publishes automatically from `main`.
-
-After pushing the repository:
-
-1. Open the GitHub repository.
-2. Select **Settings → Pages**.
-3. Set **Source** to **GitHub Actions**.
-4. Push to `main` or run the workflow manually from **Actions**.
-
-The Vite build uses relative assets and hash routing, so it works under any GitHub Pages repository path.
-
-## Configuration override
-
-The default public Supabase URL and publishable key can be replaced during development with:
-
-```text
-VITE_SUPABASE_URL=...
-VITE_SUPABASE_PUBLISHABLE_KEY=...
-```
-
-Only public/publishable client keys are supported. Administrative authorization is enforced by Supabase Auth and database policies—not by a secret embedded in the browser application.

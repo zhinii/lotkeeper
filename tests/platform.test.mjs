@@ -148,3 +148,19 @@ test("capture forms use consistent civic and commercial inventory fields", async
   assert.match(collections, /included\s+automatically/);
   assert.match(submit, /without\s+.*another photo/s);
 });
+
+test("submitters get a locked confirmation and visible AI photo suggestions", async () => {
+  const submit = await read("src/pages/SubmitPage.tsx");
+  const edge = await read("supabase/functions/enrich-submission/index.ts");
+  assert.match(submit, /SUBMITTED/);
+  assert.match(submit, /You do not need to submit it again/);
+  assert.match(submit, /AI PHOTO SUGGESTIONS/);
+  assert.match(submit, /Take or upload a photo/);
+  assert.match(submit, /Choose photo/);
+  assert.match(submit, /description will be filled in\s+automatically/);
+  assert.match(submit, /Tap to change photo/);
+  assert.match(submit, /setSubmitted\(true\)/);
+  assert.match(edge, /suggestions,/);
+  assert.match(edge, /description_applied/);
+  assert.match(edge, /proposed: descriptionApplied/);
+});

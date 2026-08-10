@@ -99,7 +99,26 @@ Deno.serve(async (request) => {
       .select("id,organization_id,photo_path,proposed")
       .maybeSingle();
     if (claimError) throw claimError;
-    if (!submission) return response({ status: "already_processed" }, 202);
+    if (!submission) {
+      const { data: existing, error: existingError } = await admin
+        .from("submissions")
+        .select("ai_status,ai_suggestions")
+        .eq("id", submissionId)
+        .maybeSingle();
+      if (existingError) throw existingError;
+      if (existing?.ai_status === "complete")
+        return response({
+          status: "complete",
+          suggestions: existing.ai_suggestions,
+          description_applied: Boolean(
+            existing.ai_suggestions?.description_applied,
+          ),
+        });
+      return response(
+        { status: existing?.ai_status || "already_processed" },
+        202,
+      );
+    }
 
     const { data: organization, error: orgError } = await admin
       .from("organizations")
@@ -198,15 +217,30 @@ Deno.serve(async (request) => {
     const keywords = [
       ...new Set([...enrichment.keywords, ...enrichment.search_terms]),
     ].slice(0, 16);
+    const descriptionApplied = !String(
+      submission.proposed?.description || "",
+    ).trim();
+    const suggestions = {
+      ...enrichment,
+      keywords,
+      description_applied: descriptionApplied,
+    };
     const { error: saveError } = await admin
       .from("submissions")
       .update({
         ai_status: "complete",
-        ai_suggestions: { ...enrichment, keywords },
+        ai_suggestions: suggestions,
+        proposed: descriptionApplied
+          ? { ...submission.proposed, description: enrichment.description }
+          : submission.proposed,
       })
       .eq("id", submissionId);
     if (saveError) throw saveError;
-    return response({ status: "complete" });
+    return response({
+      status: "complete",
+      suggestions,
+      description_applied: descriptionApplied,
+    });
   } catch (error) {
     const failureMessage = messageFrom(error);
     console.error("Image enrichment failed", failureMessage);

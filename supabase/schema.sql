@@ -280,10 +280,13 @@ create policy public_photo_admin_insert on storage.objects for insert to authent
 create policy public_photo_admin_update on storage.objects for update to authenticated using (bucket_id='public-records' and public.is_org_admin(((storage.foldername(name))[1])::uuid)) with check (bucket_id='public-records' and public.is_org_admin(((storage.foldername(name))[1])::uuid));
 
 grant usage on schema public to anon,authenticated;
+grant usage on schema public to service_role;
 grant select on public.organizations,public.records to anon,authenticated;
+grant select on public.organizations to service_role;
 grant select on public.platform_admins to authenticated;
 grant select on public.record_private_data to authenticated;
 grant insert on public.submissions to anon,authenticated;
+grant select,update on public.submissions to service_role;
 grant select,insert,update,delete on all tables in schema public to authenticated;
 grant execute on function public.create_organization to authenticated;
 grant execute on function public.approve_submission to authenticated;

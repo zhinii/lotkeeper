@@ -21,6 +21,48 @@ function response(body: unknown, status = 200) {
   });
 }
 
+function messageFrom(error: unknown) {
+  if (error instanceof Error) return error.message;
+  if (error && typeof error === "object") {
+    const value = error as Record<string, unknown>;
+    return [value.message, value.details, value.hint, value.code]
+      .filter(Boolean)
+      .map(String)
+      .join(" · ");
+  }
+  return String(error || "Unknown error");
+}
+
+function findModernSecret(value: unknown): string | null {
+  if (typeof value === "string" && value.startsWith("sb_secret_")) return value;
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const match = findModernSecret(item);
+      if (match) return match;
+    }
+  }
+  if (value && typeof value === "object") {
+    for (const item of Object.values(value)) {
+      const match = findModernSecret(item);
+      if (match) return match;
+    }
+  }
+  return null;
+}
+
+function supabaseServerKey() {
+  const modernSecrets = Deno.env.get("SUPABASE_SECRET_KEYS");
+  if (modernSecrets) {
+    try {
+      const key = findModernSecret(JSON.parse(modernSecrets));
+      if (key) return key;
+    } catch {
+      // Fall through to the legacy service-role key on older projects.
+    }
+  }
+  return Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+}
+
 Deno.serve(async (request) => {
   if (request.method === "OPTIONS")
     return new Response("ok", { headers: corsHeaders });
@@ -28,7 +70,7 @@ Deno.serve(async (request) => {
     return response({ error: "Method not allowed" }, 405);
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
-  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  const serviceKey = supabaseServerKey();
   const openAiKey = Deno.env.get("OPENAI_API_KEY");
   if (!supabaseUrl || !serviceKey || !openAiKey) {
     return response({ error: "Function secrets are incomplete" }, 500);
@@ -166,20 +208,19 @@ Deno.serve(async (request) => {
     if (saveError) throw saveError;
     return response({ status: "complete" });
   } catch (error) {
+    const failureMessage = messageFrom(error);
+    console.error("Image enrichment failed", failureMessage);
     if (submissionId) {
       await admin
         .from("submissions")
         .update({
           ai_status: "failed",
           ai_suggestions: {
-            error: error instanceof Error ? error.message : "Unknown error",
+            error: failureMessage,
           },
         })
         .eq("id", submissionId);
     }
-    return response(
-      { error: error instanceof Error ? error.message : "Enrichment failed" },
-      500,
-    );
+    return response({ error: failureMessage }, 500);
   }
 });

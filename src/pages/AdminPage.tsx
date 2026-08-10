@@ -17,11 +17,25 @@ import type {
 
 type Tab = "overview" | "review" | "records" | "configure" | "create";
 
+const adminTabs: { id: Tab; label: string; icon: string }[] = [
+  { id: "overview", label: "Home", icon: "⌂" },
+  { id: "review", label: "Review", icon: "✓" },
+  { id: "records", label: "Items", icon: "▦" },
+  { id: "configure", label: "Settings", icon: "⚙" },
+];
+
 function cloneCollections(collections: CollectionDefinition[]) {
   return collections.map((collection) => ({
     ...collection,
     fields: collection.fields.map((field) => ({ ...field })),
   }));
+}
+
+function aiStatusLabel(status: Submission["ai_status"]) {
+  if (status === "complete") return "Suggestions ready";
+  if (status === "queued" || status === "processing") return "Analyzing photo";
+  if (status === "failed") return "Photo analysis needs another try";
+  return "Photo analysis not used";
 }
 
 export default function AdminPage() {
@@ -268,6 +282,22 @@ export default function AdminPage() {
     if (error) return setMessage(error.message);
     if (selected) await loadWorkspace(selected.id);
   }
+  async function retryAi(item: Submission) {
+    const client = requireSupabase();
+    setMessage("Trying the photo analysis again…");
+    const { error: queueError } = await client
+      .from("submissions")
+      .update({ ai_status: "queued", ai_suggestions: {} })
+      .eq("id", item.id)
+      .eq("status", "pending");
+    if (queueError) return setMessage(queueError.message);
+    const { error } = await client.functions.invoke("enrich-submission", {
+      body: { submission_id: item.id },
+    });
+    if (error) setMessage(`Photo analysis could not start: ${error.message}`);
+    else setMessage("Photo analysis finished. Review the suggestions below.");
+    if (selected) await loadWorkspace(selected.id);
+  }
   async function archiveRecord(item: RecordItem) {
     if (!confirm(`Archive “${item.name}”?`)) return;
     const { error } = await requireSupabase()
@@ -297,11 +327,9 @@ export default function AdminPage() {
       <div className="login-page">
         <form onSubmit={login}>
           <div className="brand">LOTKEEPER</div>
-          <h1>Administrator sign in</h1>
-          <p>
-            Civic moderation and commercial activity are managed from one
-            focused console.
-          </p>
+          <small>MANAGER ACCESS</small>
+          <h1>Welcome back</h1>
+          <p>Sign in to review submissions and manage your organization.</p>
           <label>
             Email
             <input name="email" type="email" required />
@@ -339,57 +367,65 @@ export default function AdminPage() {
       <header className="admin-header">
         <button className="brand-button" onClick={() => navigate("home")}>
           <b>LOTKEEPER</b>
-          <span>Admin</span>
+          <span>Manager</span>
         </button>
-        <nav>
-          {(["overview", "review", "records", "configure"] as Tab[]).map(
-            (item) => (
-              <button
-                className={tab === item ? "active" : ""}
-                onClick={() => setTab(item)}
-                key={item}
-              >
-                {item}
-                {item === "review" && pending.length
-                  ? ` (${pending.length})`
-                  : ""}
-              </button>
-            ),
-          )}
+        <nav aria-label="Manager sections">
+          {adminTabs.map((item) => (
+            <button
+              className={tab === item.id ? "active" : ""}
+              onClick={() => setTab(item.id)}
+              key={item.id}
+            >
+              <span aria-hidden="true">{item.icon}</span>
+              {item.label}
+              {item.id === "review" && pending.length
+                ? ` (${pending.length})`
+                : ""}
+            </button>
+          ))}
         </nav>
-        <button onClick={() => requireSupabase().auth.signOut()}>
+        <button
+          className="admin-signout"
+          onClick={() => requireSupabase().auth.signOut()}
+        >
           Sign out
         </button>
       </header>
       <div className="admin-orgbar">
-        <select
-          aria-label="Organization"
-          value={selected?.id || ""}
-          disabled={!organizations.length}
-          onChange={(event) =>
-            setSelected(
-              organizations.find((item) => item.id === event.target.value) ||
-                null,
-            )
-          }
-        >
-          {!organizations.length && (
-            <option value="">No organizations yet</option>
-          )}
-          {organizations.map((item) => (
-            <option key={item.id} value={item.id}>
-              {item.name} · {item.mode}
-            </option>
-          ))}
-        </select>
+        <label>
+          <small>MANAGING</small>
+          <select
+            aria-label="Organization"
+            value={selected?.id || ""}
+            disabled={!organizations.length}
+            onChange={(event) =>
+              setSelected(
+                organizations.find((item) => item.id === event.target.value) ||
+                  null,
+              )
+            }
+          >
+            {!organizations.length && (
+              <option value="">No organizations yet</option>
+            )}
+            {organizations.map((item) => (
+              <option key={item.id} value={item.id}>
+                {item.name} · {item.mode}
+              </option>
+            ))}
+          </select>
+        </label>
         {isPlatformAdmin && (
-          <button onClick={() => setTab("create")}>
-            + Create organization
+          <button className="admin-new-org" onClick={() => setTab("create")}>
+            + New organization
           </button>
         )}
         {selected && (
-          <button onClick={() => navigate(`org/${selected.slug}`)}>
-            Open site ↗
+          <button
+            className="admin-open-site"
+            onClick={() => navigate(`org/${selected.slug}`)}
+          >
+            View public site ↗
           </button>
         )}
       </div>
@@ -419,23 +455,63 @@ export default function AdminPage() {
         {tab === "overview" && selected && (
           <>
             <div className="admin-title">
-              <small>ORGANIZATION OVERVIEW</small>
-              <h1>{selected?.name || "No organization"}</h1>
+              <small>MANAGER HOME</small>
+              <h1>What do you need to do?</h1>
+              <p>{selected.name}</p>
             </div>
+            <div className="admin-task-grid">
+              <button onClick={() => setTab("review")}>
+                <span className="task-icon review">✓</span>
+                <span>
+                  <b>Review submissions</b>
+                  <small>
+                    {pending.length
+                      ? `${pending.length} waiting for a decision`
+                      : "Nothing is waiting"}
+                  </small>
+                </span>
+                <i>→</i>
+              </button>
+              <button onClick={() => setTab("records")}>
+                <span className="task-icon items">▦</span>
+                <span>
+                  <b>Manage items</b>
+                  <small>{records.length} approved entries</small>
+                </span>
+                <i>→</i>
+              </button>
+              <button onClick={() => setTab("configure")}>
+                <span className="task-icon settings">⚙</span>
+                <span>
+                  <b>Change organization settings</b>
+                  <small>Lists, access, AI and map</small>
+                </span>
+                <i>→</i>
+              </button>
+              <button onClick={() => navigate(`org/${selected.slug}`)}>
+                <span className="task-icon site">↗</span>
+                <span>
+                  <b>View the public site</b>
+                  <small>See what visitors see</small>
+                </span>
+                <i>→</i>
+              </button>
+            </div>
+            <h2 className="admin-section-label">At a glance</h2>
             <div className="metric-grid">
               <article>
                 <b>{pending.length}</b>
-                <span>Pending reviews</span>
+                <span>Waiting for review</span>
               </article>
               <article>
                 <b>{openAlerts.length}</b>
-                <span>Open alerts</span>
+                <span>Need attention</span>
               </article>
               <article>
                 <b>
                   {records.filter((item) => item.status === "active").length}
                 </b>
-                <span>Active records</span>
+                <span>Published items</span>
               </article>
               <article>
                 <b>{records.filter((item) => item.quantity === 0).length}</b>
@@ -443,7 +519,13 @@ export default function AdminPage() {
               </article>
             </div>
             <section className="panel">
-              <h2>Needs attention</h2>
+              <div className="panel-heading">
+                <div>
+                  <small>FOLLOW UP</small>
+                  <h2>Needs attention</h2>
+                </div>
+                <span>{openAlerts.length}</span>
+              </div>
               {openAlerts.map((item) => (
                 <article className="alert-row" key={item.id}>
                   <div>
@@ -458,8 +540,10 @@ export default function AdminPage() {
                 <div className="empty">No open alerts.</div>
               )}
             </section>
-            <section className="panel">
-              <h2>Resolved history</h2>
+            <details className="panel resolved-panel">
+              <summary>
+                Resolved history <span>{resolvedAlerts.length}</span>
+              </summary>
               {resolvedAlerts.map((item) => (
                 <article className="alert-row" key={item.id}>
                   <div>
@@ -472,14 +556,17 @@ export default function AdminPage() {
               {!resolvedAlerts.length && (
                 <div className="empty">No resolved alerts.</div>
               )}
-            </section>
+            </details>
           </>
         )}
         {tab === "review" && (
           <>
             <div className="admin-title">
-              <small>MODERATION</small>
-              <h1>Submission review</h1>
+              <small>CHECK BEFORE PUBLISHING</small>
+              <h1>Review submissions</h1>
+              <p>
+                Look at the photo and details, then choose Approve or Reject.
+              </p>
             </div>
             <div className="segmented">
               <button
@@ -499,7 +586,14 @@ export default function AdminPage() {
               {reviewItems.map((item) => (
                 <article key={item.id}>
                   <div className="moderation-status">
-                    {item.status} · {item.submission_type}
+                    {item.status === "pending"
+                      ? "Waiting for your decision"
+                      : item.status === "approved"
+                        ? "Approved"
+                        : "Rejected"}
+                    {item.submission_type === "update"
+                      ? " · update to an item"
+                      : " · new item"}
                   </div>
                   <div className="review-media">
                     {submissionPhotos[item.id] ? (
@@ -535,13 +629,13 @@ export default function AdminPage() {
                       </div>
                     )}
                     <div>
-                      <b>Proposed</b>
+                      <b>Submitted description</b>
                       <p>{item.proposed.description}</p>
                       <span>{item.ai_suggestions?.keywords?.join(" · ")}</span>
                     </div>
                     {item.ai_status === "complete" && (
                       <div>
-                        <b>AI image suggestion</b>
+                        <b>Suggested from the photo</b>
                         <p>{item.ai_suggestions.description}</p>
                         <span>{item.ai_suggestions.category}</span>
                         {!!item.ai_suggestions.warnings?.length && (
@@ -552,6 +646,16 @@ export default function AdminPage() {
                         )}
                       </div>
                     )}
+                    {item.ai_status === "failed" && (
+                      <div className="ai-failed">
+                        <b>Photo suggestions were not created</b>
+                        <p>
+                          The submission is safe to review without them, or you
+                          can try again.
+                        </p>
+                        <button onClick={() => retryAi(item)}>Try again</button>
+                      </div>
+                    )}
                   </div>
                   <dl>
                     <div>
@@ -559,12 +663,18 @@ export default function AdminPage() {
                       <dd>{new Date(item.submitted_at).toLocaleString()}</dd>
                     </div>
                     <div>
-                      <dt>Location</dt>
-                      <dd>{item.location_source.replaceAll("_", " ")}</dd>
+                      <dt>Map location</dt>
+                      <dd>
+                        {item.location_source === "photo_exif"
+                          ? "From the photo"
+                          : item.location_source === "browser_gps"
+                            ? "From the device"
+                            : "Placed on the map"}
+                      </dd>
                     </div>
                     <div>
-                      <dt>AI</dt>
-                      <dd>{item.ai_status}</dd>
+                      <dt>Photo suggestions</dt>
+                      <dd>{aiStatusLabel(item.ai_status)}</dd>
                     </div>
                   </dl>
                   <div className="moderation-actions">
@@ -574,13 +684,13 @@ export default function AdminPage() {
                           className="reject"
                           onClick={() => review(item, "rejected")}
                         >
-                          Reject
+                          Reject submission
                         </button>
                         <button
                           className="approve"
                           onClick={() => review(item, "approved")}
                         >
-                          Approve
+                          Approve and publish
                         </button>
                       </>
                     ) : (
@@ -588,27 +698,44 @@ export default function AdminPage() {
                         className="danger"
                         onClick={() => deleteSubmission(item)}
                       >
-                        Delete submission
+                        Delete from history
                       </button>
                     )}
                   </div>
                 </article>
               ))}
+              {!reviewItems.length && (
+                <div className="admin-list-empty">
+                  <span>✓</span>
+                  <h2>
+                    {reviewView === "pending"
+                      ? "You are all caught up"
+                      : "No review history yet"}
+                  </h2>
+                  <p>
+                    {reviewView === "pending"
+                      ? "New public submissions will appear here."
+                      : "Approved and rejected submissions will appear here."}
+                  </p>
+                </div>
+              )}
             </div>
           </>
         )}
         {tab === "records" && (
           <>
             <div className="admin-title">
-              <small>APPROVED DATA</small>
-              <h1>Records</h1>
+              <small>WHAT IS PUBLISHED</small>
+              <h1>Manage items</h1>
+              <p>These entries are visible in your organization directory.</p>
             </div>
             <div className="record-admin-list">
               {records.map((item) => (
                 <article key={item.id}>
                   <div>
                     <small>
-                      {item.category} · version {item.version}
+                      {item.category || "Uncategorized"} · last updated{" "}
+                      {new Date(item.updated_at).toLocaleDateString()}
                     </small>
                     <b>{item.name}</b>
                     <p>{item.description}</p>
@@ -621,6 +748,13 @@ export default function AdminPage() {
                   <button onClick={() => archiveRecord(item)}>Archive</button>
                 </article>
               ))}
+              {!records.length && (
+                <div className="admin-list-empty">
+                  <span>▦</span>
+                  <h2>No approved items yet</h2>
+                  <p>Approve a submission to publish the first item.</p>
+                </div>
+              )}
             </div>
           </>
         )}
@@ -648,64 +782,86 @@ export default function AdminPage() {
         {tab === "configure" && selected && (
           <>
             <div className="admin-title">
-              <small>DATA MODEL</small>
-              <h1>Collections and fields</h1>
-              <p>
-                Choose what is public, searchable and open to public
-                contribution.
-              </p>
+              <small>ORGANIZATION SETTINGS</small>
+              <h1>Set up {selected.name}</h1>
+              <p>Change what people see, what they can add, and where it is.</p>
             </div>
-            <CollectionEditor
-              value={editCollections}
-              onChange={setEditCollections}
-            />
-            <label className="access-setting panel">
-              <input
-                type="checkbox"
-                checked={editPublic}
-                onChange={(event) => setEditPublic(event.target.checked)}
-              />
-              <span>
-                <b>Public deployment</b>
-                <small>
-                  Anyone can open public collections. Private deployments
-                  require an assigned user account.
-                </small>
-              </span>
-            </label>
-            <label className="access-setting panel">
-              <input
-                type="checkbox"
-                checked={editAi}
-                onChange={(event) => setEditAi(event.target.checked)}
-              />
-              <span>
-                <b>AI image suggestions</b>
-                <small>
-                  Generate draft descriptions, categories and search terms for
-                  new photos. Administrators still approve every result.
-                </small>
-              </span>
-            </label>
-            <OrganizationMapEditor value={editMap} onChange={setEditMap} />
-            <button className="save-button" onClick={saveConfiguration}>
-              Save configuration
-            </button>
+            <section className="settings-section">
+              <div className="settings-step">1</div>
+              <div className="settings-content">
+                <h2>Lists and information</h2>
+                <p>
+                  Create the lists people browse, such as parks, equipment or
+                  inventory. Open a list to change the information it collects.
+                </p>
+                <CollectionEditor
+                  value={editCollections}
+                  onChange={setEditCollections}
+                />
+              </div>
+            </section>
+            <section className="settings-section">
+              <div className="settings-step">2</div>
+              <div className="settings-content">
+                <h2>Access and photo help</h2>
+                <p>Choose who can open the site and how photos are reviewed.</p>
+                <label className="access-setting panel">
+                  <input
+                    type="checkbox"
+                    checked={editPublic}
+                    onChange={(event) => setEditPublic(event.target.checked)}
+                  />
+                  <span>
+                    <b>Anyone can open this organization</b>
+                    <small>
+                      Turn this off when only assigned staff should have access.
+                    </small>
+                  </span>
+                </label>
+                <label className="access-setting panel">
+                  <input
+                    type="checkbox"
+                    checked={editAi}
+                    onChange={(event) => setEditAi(event.target.checked)}
+                  />
+                  <span>
+                    <b>Suggest descriptions from uploaded photos</b>
+                    <small>
+                      Suggestions never publish automatically. A manager still
+                      approves every submission.
+                    </small>
+                  </span>
+                </label>
+              </div>
+            </section>
+            <section className="settings-section map-settings-section">
+              <div className="settings-step">3</div>
+              <div className="settings-content">
+                <OrganizationMapEditor value={editMap} onChange={setEditMap} />
+              </div>
+            </section>
+            <div className="settings-save-bar">
+              <span>Changes are not live until you save.</span>
+              <button className="save-button" onClick={saveConfiguration}>
+                Save changes
+              </button>
+            </div>
           </>
         )}
         {tab === "create" && (
           <>
             <div className="admin-title">
-              <small>NEW DEPLOYMENT</small>
-              <h1>Create an organization</h1>
+              <small>ADD AN ORGANIZATION</small>
+              <h1>Set up a new site</h1>
+              <p>Follow the three steps. You can change everything later.</p>
             </div>
             <form className="create-org" onSubmit={createOrganization}>
               <section className="create-step">
                 <div className="step-heading">
                   <b>1</b>
                   <span>
-                    <h2>Deployment type</h2>
-                    <p>Name the site and choose how it will be used.</p>
+                    <h2>Organization basics</h2>
+                    <p>Name it and choose the closest starting setup.</p>
                   </span>
                 </div>
                 <div className="create-identity-grid">
@@ -728,7 +884,7 @@ export default function AdminPage() {
                   </label>
                 </div>
                 <label>
-                  Use case
+                  What will this organization manage?
                   <select
                     name="mode"
                     value={createMode}
@@ -758,8 +914,8 @@ export default function AdminPage() {
                     onChange={(event) => setCreatePublic(event.target.checked)}
                   />
                   <span>
-                    <b>Public deployment</b>
-                    <small>Turn off for a staff-only site.</small>
+                    <b>Anyone can open this organization</b>
+                    <small>Turn this off when it is only for staff.</small>
                   </span>
                 </label>
               </section>
@@ -767,10 +923,10 @@ export default function AdminPage() {
                 <div className="step-heading">
                   <b>2</b>
                   <span>
-                    <h2>Collections and fields</h2>
+                    <h2>Lists and information</h2>
                     <p>
-                      Rename the starting collections, add your own, and choose
-                      exactly what information each one records.
+                      Rename the starting lists and choose what information
+                      people enter for each item.
                     </p>
                   </span>
                 </div>
@@ -783,8 +939,8 @@ export default function AdminPage() {
                 <div className="step-heading">
                   <b>3</b>
                   <span>
-                    <h2>Map and boundary</h2>
-                    <p>Choose the starting view and draw the managed area.</p>
+                    <h2>Map area</h2>
+                    <p>Show where this organization is located.</p>
                   </span>
                 </div>
                 <OrganizationMapEditor
@@ -792,7 +948,7 @@ export default function AdminPage() {
                   onChange={setCreateMap}
                 />
               </section>
-              <button>Create {createMode} organization</button>
+              <button>Create organization</button>
             </form>
           </>
         )}

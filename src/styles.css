@@ -2561,6 +2561,17 @@ body:has(.login-page) {
   line-height: 1.55;
 }
 
+.app-error-detail {
+  display: block;
+  margin: 14px 0;
+  padding: 10px;
+  overflow-wrap: anywhere;
+  color: #6d2e24;
+  background: #fff1ed;
+  border-radius: 9px;
+  font-size: 12px;
+}
+
 .app-error-page button {
   min-height: 48px;
   margin: 8px 8px 0 0;

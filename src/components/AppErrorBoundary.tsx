@@ -2,12 +2,15 @@ import { Component, type ErrorInfo, type ReactNode } from "react";
 
 export default class AppErrorBoundary extends Component<
   { children: ReactNode },
-  { failed: boolean }
+  { failed: boolean; message: string }
 > {
-  state = { failed: false };
+  state = { failed: false, message: "" };
 
-  static getDerivedStateFromError() {
-    return { failed: true };
+  static getDerivedStateFromError(error: unknown) {
+    return {
+      failed: true,
+      message: error instanceof Error ? error.message : "Unknown screen error",
+    };
   }
 
   componentDidCatch(error: Error, info: ErrorInfo) {
@@ -25,6 +28,7 @@ export default class AppErrorBoundary extends Component<
             Your photo was not submitted. Reload the screen and try again. If
             the photo still cannot be opened, choose a JPEG, PNG or WebP image.
           </p>
+          <code className="app-error-detail">{this.state.message}</code>
           <button onClick={() => window.location.reload()}>Reload screen</button>
           <button
             className="secondary"

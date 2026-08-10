@@ -18,6 +18,12 @@ const fieldPresets: Omit<
   { key: "verified_date", label: "Last verified", type: "date" },
 ];
 
+const kindLabels: Record<CollectionDefinition["kind"], string> = {
+  place: "Place or location",
+  persistent: "Reusable item",
+  consumable: "Counted inventory",
+};
+
 export default function CollectionEditor({
   value,
   onChange,
@@ -81,172 +87,212 @@ export default function CollectionEditor({
   return (
     <div className="collection-editor">
       {value.map((collection, index) => (
-        <article key={collection.id}>
-          <div className="collection-head">
-            <input
-              aria-label="Collection name"
-              value={collection.name}
-              onChange={(event) => update(index, { name: event.target.value })}
-            />
-            <select
-              value={collection.kind}
-              onChange={(event) =>
-                update(index, {
-                  kind: event.target.value as CollectionDefinition["kind"],
-                })
-              }
-            >
-              <option value="place">Place / location</option>
-              <option value="persistent">Persistent asset</option>
-              <option value="consumable">Consumable inventory</option>
-            </select>
+        <details className="collection-builder-card" key={collection.id}>
+          <summary>
+            <span className="collection-summary-icon">
+              {collection.icon || collection.name.charAt(0)}
+            </span>
+            <span>
+              <b>{collection.name}</b>
+              <small>
+                {kindLabels[collection.kind]} · {collection.fields.length}{" "}
+                {collection.fields.length === 1 ? "field" : "fields"}
+              </small>
+            </span>
+            <i>Open to edit</i>
+          </summary>
+          <div className="collection-builder-body">
+            <div className="collection-head">
+              <label>
+                List name
+                <input
+                  aria-label="Collection name"
+                  value={collection.name}
+                  onChange={(event) =>
+                    update(index, { name: event.target.value })
+                  }
+                />
+              </label>
+              <label>
+                What does it contain?
+                <select
+                  value={collection.kind}
+                  onChange={(event) =>
+                    update(index, {
+                      kind: event.target.value as CollectionDefinition["kind"],
+                    })
+                  }
+                >
+                  <option value="place">Places or locations</option>
+                  <option value="persistent">Reusable items</option>
+                  <option value="consumable">Inventory with a quantity</option>
+                </select>
+              </label>
+            </div>
+            <div className="rule-row">
+              <label>
+                <input
+                  type="checkbox"
+                  checked={collection.publicVisible}
+                  onChange={(event) =>
+                    update(index, { publicVisible: event.target.checked })
+                  }
+                />
+                Show this list on the public site
+              </label>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={collection.publicSubmit}
+                  onChange={(event) =>
+                    update(index, { publicSubmit: event.target.checked })
+                  }
+                />
+                Let visitors suggest new entries
+              </label>
+            </div>
+            <h4>What information should each entry include?</h4>
+            <p className="field-help">
+              Select common information, or add a field with your own name.
+            </p>
+            <div className="preset-fields">
+              {fieldPresets.map((preset) => (
+                <label key={preset.key}>
+                  <input
+                    type="checkbox"
+                    checked={collection.fields.some(
+                      (field) => field.key === preset.key,
+                    )}
+                    onChange={(event) =>
+                      toggleField(index, preset, event.target.checked)
+                    }
+                  />
+                  {preset.label}
+                </label>
+              ))}
+            </div>
+            <div className="custom-field-row">
+              <input
+                aria-label="New field name"
+                placeholder="Add your own field"
+                value={draftLabels[collection.id] || ""}
+                onChange={(event) =>
+                  setDraftLabels((current) => ({
+                    ...current,
+                    [collection.id]: event.target.value,
+                  }))
+                }
+              />
+              <select
+                aria-label="New field type"
+                value={draftTypes[collection.id] || "text"}
+                onChange={(event) =>
+                  setDraftTypes((current) => ({
+                    ...current,
+                    [collection.id]: event.target.value as FieldType,
+                  }))
+                }
+              >
+                <option value="text">Words</option>
+                <option value="number">Number</option>
+                <option value="date">Date</option>
+                <option value="boolean">Yes or no</option>
+              </select>
+              <button
+                type="button"
+                onClick={() => addCustomField(index, collection)}
+              >
+                Add
+              </button>
+            </div>
+            {!!collection.fields.length && (
+              <div className="selected-fields">
+                <h4>Selected information</h4>
+                {collection.fields.map((field) => (
+                  <div className="field-rules" key={field.key}>
+                    <b>{field.label}</b>
+                    <label>
+                      <input
+                        type="checkbox"
+                        checked={field.required}
+                        onChange={(event) =>
+                          update(index, {
+                            fields: collection.fields.map((item) =>
+                              item.key === field.key
+                                ? { ...item, required: event.target.checked }
+                                : item,
+                            ),
+                          })
+                        }
+                      />
+                      Must be filled in
+                    </label>
+                    <label>
+                      <input
+                        type="checkbox"
+                        checked={field.publicVisible}
+                        onChange={(event) =>
+                          update(index, {
+                            fields: collection.fields.map((item) =>
+                              item.key === field.key
+                                ? {
+                                    ...item,
+                                    publicVisible: event.target.checked,
+                                  }
+                                : item,
+                            ),
+                          })
+                        }
+                      />
+                      Visitors can see it
+                    </label>
+                    <label>
+                      <input
+                        type="checkbox"
+                        checked={field.publicSubmit}
+                        onChange={(event) =>
+                          update(index, {
+                            fields: collection.fields.map((item) =>
+                              item.key === field.key
+                                ? {
+                                    ...item,
+                                    publicSubmit: event.target.checked,
+                                  }
+                                : item,
+                            ),
+                          })
+                        }
+                      />
+                      Visitors can fill it in
+                    </label>
+                    <button
+                      type="button"
+                      className="field-remove"
+                      onClick={() =>
+                        update(index, {
+                          fields: collection.fields.filter(
+                            (item) => item.key !== field.key,
+                          ),
+                        })
+                      }
+                    >
+                      Remove
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
             <button
               type="button"
+              className="remove-collection"
               onClick={() =>
                 onChange(value.filter((_, position) => position !== index))
               }
             >
-              Remove
+              Remove this list
             </button>
           </div>
-          <div className="rule-row">
-            <label>
-              <input
-                type="checkbox"
-                checked={collection.publicVisible}
-                onChange={(event) =>
-                  update(index, { publicVisible: event.target.checked })
-                }
-              />
-              Publicly visible
-            </label>
-            <label>
-              <input
-                type="checkbox"
-                checked={collection.publicSubmit}
-                onChange={(event) =>
-                  update(index, { publicSubmit: event.target.checked })
-                }
-              />
-              Public submissions
-            </label>
-          </div>
-          <h4>Common fields</h4>
-          <div className="preset-fields">
-            {fieldPresets.map((preset) => (
-              <label key={preset.key}>
-                <input
-                  type="checkbox"
-                  checked={collection.fields.some(
-                    (field) => field.key === preset.key,
-                  )}
-                  onChange={(event) =>
-                    toggleField(index, preset, event.target.checked)
-                  }
-                />
-                {preset.label}
-              </label>
-            ))}
-          </div>
-          <div className="custom-field-row">
-            <input
-              placeholder="Custom field name"
-              value={draftLabels[collection.id] || ""}
-              onChange={(event) =>
-                setDraftLabels((current) => ({
-                  ...current,
-                  [collection.id]: event.target.value,
-                }))
-              }
-            />
-            <select
-              value={draftTypes[collection.id] || "text"}
-              onChange={(event) =>
-                setDraftTypes((current) => ({
-                  ...current,
-                  [collection.id]: event.target.value as FieldType,
-                }))
-              }
-            >
-              <option value="text">Text</option>
-              <option value="number">Number</option>
-              <option value="date">Date</option>
-              <option value="boolean">Yes / no</option>
-            </select>
-            <button
-              type="button"
-              onClick={() => addCustomField(index, collection)}
-            >
-              Add field
-            </button>
-          </div>
-          {collection.fields.map((field) => (
-            <div className="field-rules" key={field.key}>
-              <b>{field.label}</b>
-              <label>
-                <input
-                  type="checkbox"
-                  checked={field.required}
-                  onChange={(event) =>
-                    update(index, {
-                      fields: collection.fields.map((item) =>
-                        item.key === field.key
-                          ? { ...item, required: event.target.checked }
-                          : item,
-                      ),
-                    })
-                  }
-                />
-                Required
-              </label>
-              <label>
-                <input
-                  type="checkbox"
-                  checked={field.publicVisible}
-                  onChange={(event) =>
-                    update(index, {
-                      fields: collection.fields.map((item) =>
-                        item.key === field.key
-                          ? { ...item, publicVisible: event.target.checked }
-                          : item,
-                      ),
-                    })
-                  }
-                />
-                Public
-              </label>
-              <label>
-                <input
-                  type="checkbox"
-                  checked={field.publicSubmit}
-                  onChange={(event) =>
-                    update(index, {
-                      fields: collection.fields.map((item) =>
-                        item.key === field.key
-                          ? { ...item, publicSubmit: event.target.checked }
-                          : item,
-                      ),
-                    })
-                  }
-                />
-                Public entry
-              </label>
-              <button
-                type="button"
-                className="field-remove"
-                onClick={() =>
-                  update(index, {
-                    fields: collection.fields.filter(
-                      (item) => item.key !== field.key,
-                    ),
-                  })
-                }
-              >
-                Remove
-              </button>
-            </div>
-          ))}
-        </article>
+        </details>
       ))}
       <button
         type="button"
@@ -266,7 +312,7 @@ export default function CollectionEditor({
           ])
         }
       >
-        + Add collection
+        + Add another list
       </button>
     </div>
   );

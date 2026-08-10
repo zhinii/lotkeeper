@@ -53,7 +53,7 @@ test("public submission workflow requires mapped evidence and moderation", async
   assert.match(submit, /manual_pin/);
   assert.match(submit, /A mapped location is required/);
   assert.match(admin, /approve_submission/);
-  assert.match(admin, /Delete submission/);
+  assert.match(admin, /Delete from history/);
 });
 
 test("commercial use logs searches, inventory use and admin alerts", async () => {
@@ -68,11 +68,18 @@ test("commercial use logs searches, inventory use and admin alerts", async () =>
 test("image enrichment is server-side, optional and cost limited", async () => {
   const edge = await read("supabase/functions/enrich-submission/index.ts");
   const client = await read("src/pages/SubmitPage.tsx");
+  const schema = await read("supabase/schema.sql");
   assert.match(edge, /Deno\.env\.get\("OPENAI_API_KEY"\)/);
+  assert.match(edge, /SUPABASE_SECRET_KEYS/);
+  assert.match(edge, /messageFrom/);
   assert.match(edge, /detail:\s*"low"/);
   assert.match(edge, /AI_DAILY_LIMIT/);
   assert.match(edge, /gpt-4o-mini/);
   assert.match(client, /organization\.ai_enabled/);
+  assert.match(
+    schema,
+    /grant select,update on public\.submissions to service_role/,
+  );
 });
 
 test("admin onboarding exposes deployment type, fields and a clear empty state", async () => {
@@ -82,7 +89,7 @@ test("admin onboarding exposes deployment type, fields and a clear empty state",
   assert.match(admin, /Civic · public places and contributions/);
   assert.match(admin, /Commercial · inventory, materials and equipment/);
   assert.match(admin, /value=\{createCollections\}/);
-  assert.match(admin, /Map and boundary/);
+  assert.match(admin, /Map area/);
 });
 
 test("boundary drawing uses the current map tool and shows every point", async () => {
@@ -107,4 +114,18 @@ test("public browsing is organization-first, mobile-friendly and map-linked", as
   assert.match(directory, /record-detail-sheet/);
   assert.match(directory, /floating-add/);
   assert.doesNotMatch(directory, /SEARCH RESULTS/);
+});
+
+test("manager console uses plain-language tasks and hides advanced setup", async () => {
+  const admin = await read("src/pages/AdminPage.tsx");
+  const collections = await read("src/components/CollectionEditor.tsx");
+  const map = await read("src/components/OrganizationMapEditor.tsx");
+  assert.match(admin, /What do you need to do\?/);
+  assert.match(admin, /Review submissions/);
+  assert.match(admin, /Manage items/);
+  assert.match(admin, /Change organization settings/);
+  assert.match(admin, /retryAi/);
+  assert.match(collections, /Open to edit/);
+  assert.match(collections, /Let visitors suggest new entries/);
+  assert.match(map, /Exact map values/);
 });

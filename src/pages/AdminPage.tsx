@@ -17,6 +17,13 @@ import type {
 
 type Tab = "overview" | "review" | "records" | "configure" | "create";
 
+function cloneCollections(collections: CollectionDefinition[]) {
+  return collections.map((collection) => ({
+    ...collection,
+    fields: collection.fields.map((field) => ({ ...field })),
+  }));
+}
+
 export default function AdminPage() {
   const [session, setSession] = useState<any>(null);
   const [isPlatformAdmin, setIsPlatformAdmin] = useState(false);
@@ -46,6 +53,9 @@ export default function AdminPage() {
   const [editAi, setEditAi] = useState(false);
   const [createMode, setCreateMode] = useState<"civic" | "commercial">("civic");
   const [createPublic, setCreatePublic] = useState(true);
+  const [createCollections, setCreateCollections] = useState<
+    CollectionDefinition[]
+  >(() => cloneCollections(civicDefaults));
   const [createMap, setCreateMap] = useState<MapConfiguration>({
     latitude: 36.9148,
     longitude: -111.4573,
@@ -155,7 +165,6 @@ export default function AdminPage() {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
     const mode = createMode;
-    const collections = mode === "civic" ? civicDefaults : commercialDefaults;
     const client = requireSupabase();
     const { data: newId, error } = await client.rpc("create_organization", {
       org_name: String(form.get("name")),
@@ -165,7 +174,7 @@ export default function AdminPage() {
       latitude: createMap.latitude,
       longitude: createMap.longitude,
       zoom_level: createMap.zoom,
-      collection_config: collections,
+      collection_config: createCollections,
     });
     if (error) return setMessage(error.message);
     if (newId && createMap.boundary.length) {
@@ -354,7 +363,9 @@ export default function AdminPage() {
       </header>
       <div className="admin-orgbar">
         <select
+          aria-label="Organization"
           value={selected?.id || ""}
+          disabled={!organizations.length}
           onChange={(event) =>
             setSelected(
               organizations.find((item) => item.id === event.target.value) ||
@@ -362,6 +373,9 @@ export default function AdminPage() {
             )
           }
         >
+          {!organizations.length && (
+            <option value="">No organizations yet</option>
+          )}
           {organizations.map((item) => (
             <option key={item.id} value={item.id}>
               {item.name} · {item.mode}
@@ -369,7 +383,9 @@ export default function AdminPage() {
           ))}
         </select>
         {isPlatformAdmin && (
-          <button onClick={() => setTab("create")}>+ New organization</button>
+          <button onClick={() => setTab("create")}>
+            + Create organization
+          </button>
         )}
         {selected && (
           <button onClick={() => navigate(`org/${selected.slug}`)}>
@@ -379,7 +395,28 @@ export default function AdminPage() {
       </div>
       <main className="admin-main">
         <p className="notice">{message}</p>
-        {tab === "overview" && (
+        {tab === "overview" && !selected && (
+          <section className="admin-empty-state panel">
+            <small>GET STARTED</small>
+            <h1>Create your first organization</h1>
+            <p>
+              An organization is one deployed site. Choose civic or commercial,
+              define its collections and fields, then set its map and boundary.
+            </p>
+            {isPlatformAdmin ? (
+              <button onClick={() => setTab("create")}>
+                Create the first organization
+              </button>
+            ) : (
+              <div className="access-warning">
+                This login has not been assigned platform-administrator access.
+                Ask a platform administrator to assign the role before creating
+                deployments.
+              </div>
+            )}
+          </section>
+        )}
+        {tab === "overview" && selected && (
           <>
             <div className="admin-title">
               <small>ORGANIZATION OVERVIEW</small>
@@ -587,6 +624,27 @@ export default function AdminPage() {
             </div>
           </>
         )}
+        {tab === "configure" && !selected && (
+          <section className="admin-empty-state panel">
+            <small>CONFIGURATION</small>
+            <h1>No organization to configure</h1>
+            <p>
+              Create an organization first. Its civic or commercial type,
+              collections, fields, public access, AI options and map are all set
+              in the guided setup.
+            </p>
+            {isPlatformAdmin ? (
+              <button onClick={() => setTab("create")}>
+                Create an organization
+              </button>
+            ) : (
+              <div className="access-warning">
+                Your account can sign in, but it does not have permission to
+                create deployments.
+              </div>
+            )}
+          </section>
+        )}
         {tab === "configure" && selected && (
           <>
             <div className="admin-title">
@@ -642,47 +700,99 @@ export default function AdminPage() {
               <h1>Create an organization</h1>
             </div>
             <form className="create-org" onSubmit={createOrganization}>
-              <label>
-                Name
-                <input name="name" required />
-              </label>
-              <label>
-                URL slug
-                <input name="slug" pattern="[a-z0-9-]+" required />
-              </label>
-              <label>
-                Mode
-                <select
-                  name="mode"
-                  value={createMode}
-                  onChange={(event) => {
-                    const mode = event.target.value as "civic" | "commercial";
-                    setCreateMode(mode);
-                    setCreatePublic(mode === "civic");
-                  }}
-                >
-                  <option value="civic">Civic · public contributions</option>
-                  <option value="commercial">
-                    Commercial · authenticated inventory
-                  </option>
-                </select>
-              </label>
-              <label className="access-setting">
-                <input
-                  type="checkbox"
-                  checked={createPublic}
-                  onChange={(event) => setCreatePublic(event.target.checked)}
+              <section className="create-step">
+                <div className="step-heading">
+                  <b>1</b>
+                  <span>
+                    <h2>Deployment type</h2>
+                    <p>Name the site and choose how it will be used.</p>
+                  </span>
+                </div>
+                <div className="create-identity-grid">
+                  <label>
+                    Organization name
+                    <input
+                      name="name"
+                      placeholder="City parks, north yard, main store…"
+                      required
+                    />
+                  </label>
+                  <label>
+                    URL name
+                    <input
+                      name="slug"
+                      placeholder="city-parks"
+                      pattern="[a-z0-9-]+"
+                      required
+                    />
+                  </label>
+                </div>
+                <label>
+                  Use case
+                  <select
+                    name="mode"
+                    value={createMode}
+                    onChange={(event) => {
+                      const mode = event.target.value as "civic" | "commercial";
+                      setCreateMode(mode);
+                      setCreatePublic(mode === "civic");
+                      setCreateCollections(
+                        cloneCollections(
+                          mode === "civic" ? civicDefaults : commercialDefaults,
+                        ),
+                      );
+                    }}
+                  >
+                    <option value="civic">
+                      Civic · public places and contributions
+                    </option>
+                    <option value="commercial">
+                      Commercial · inventory, materials and equipment
+                    </option>
+                  </select>
+                </label>
+                <label className="access-setting">
+                  <input
+                    type="checkbox"
+                    checked={createPublic}
+                    onChange={(event) => setCreatePublic(event.target.checked)}
+                  />
+                  <span>
+                    <b>Public deployment</b>
+                    <small>Turn off for a staff-only site.</small>
+                  </span>
+                </label>
+              </section>
+              <section className="create-step">
+                <div className="step-heading">
+                  <b>2</b>
+                  <span>
+                    <h2>Collections and fields</h2>
+                    <p>
+                      Rename the starting collections, add your own, and choose
+                      exactly what information each one records.
+                    </p>
+                  </span>
+                </div>
+                <CollectionEditor
+                  value={createCollections}
+                  onChange={setCreateCollections}
                 />
-                <span>
-                  <b>Public deployment</b>
-                  <small>Turn off for a staff-only site.</small>
-                </span>
-              </label>
-              <OrganizationMapEditor
-                value={createMap}
-                onChange={setCreateMap}
-              />
-              <button>Create organization</button>
+              </section>
+              <section className="create-step">
+                <div className="step-heading">
+                  <b>3</b>
+                  <span>
+                    <h2>Map and boundary</h2>
+                    <p>Choose the starting view and draw the managed area.</p>
+                  </span>
+                </div>
+                <OrganizationMapEditor
+                  value={createMap}
+                  onChange={setCreateMap}
+                />
+              </section>
+              <button>Create {createMode} organization</button>
             </form>
           </>
         )}

@@ -47,8 +47,16 @@ export default function MapView({
     onSelect,
   });
   const currentBoundary = useRef(boundary);
+  const interactionMode = useRef({
+    picker: Boolean(picker),
+    boundaryEditor: Boolean(boundaryEditor),
+  });
   callbacks.current = { onPick, onBoundaryChange, onViewportChange, onSelect };
   currentBoundary.current = boundary;
+  interactionMode.current = {
+    picker: Boolean(picker),
+    boundaryEditor: Boolean(boundaryEditor),
+  };
 
   useEffect(() => {
     if (!host.current || !window.maplibregl) return;
@@ -73,7 +81,7 @@ export default function MapView({
       new window.maplibregl.NavigationControl({ showCompass: false }),
       "top-right",
     );
-    if (picker) {
+    if (picker || boundaryEditor) {
       pickMarker.current = new window.maplibregl.Marker({
         draggable: true,
         color: "#ffcf24",
@@ -81,22 +89,24 @@ export default function MapView({
         .setLngLat([longitude, latitude])
         .addTo(map.current);
       pickMarker.current.on("dragend", () => {
+        if (!interactionMode.current.picker) return;
         const p = pickMarker.current.getLngLat();
         callbacks.current.onPick?.(p.lat, p.lng);
       });
-      map.current.on("click", (event: any) => {
-        pickMarker.current.setLngLat(event.lngLat);
-        callbacks.current.onPick?.(event.lngLat.lat, event.lngLat.lng);
-      });
     }
-    if (boundaryEditor) {
-      map.current.on("click", (event: any) =>
+    map.current.on("click", (event: any) => {
+      if (interactionMode.current.boundaryEditor) {
         callbacks.current.onBoundaryChange?.([
           ...currentBoundary.current,
           [event.lngLat.lat, event.lngLat.lng],
-        ]),
-      );
-    }
+        ]);
+        return;
+      }
+      if (interactionMode.current.picker) {
+        pickMarker.current?.setLngLat(event.lngLat);
+        callbacks.current.onPick?.(event.lngLat.lat, event.lngLat.lng);
+      }
+    });
     map.current.on("moveend", () => {
       const center = map.current.getCenter();
       callbacks.current.onViewportChange?.(
@@ -143,38 +153,59 @@ export default function MapView({
   useEffect(() => {
     if (!map.current) return;
     const update = () => {
-      const coordinates =
-        boundary.length >= 3
-          ? [
-              [
-                ...boundary.map(([lat, lng]) => [lng, lat]),
-                [boundary[0][1], boundary[0][0]],
-              ],
-            ]
-          : [];
-      const data =
-        boundary.length >= 3
-          ? {
-              type: "Feature",
-              properties: {},
-              geometry: { type: "Polygon", coordinates },
-            }
-          : { type: "FeatureCollection", features: [] };
+      const points = boundary.map(([lat, lng]) => [lng, lat]);
+      const features: any[] = boundary.map(([lat, lng], index) => ({
+        type: "Feature",
+        properties: { index: index + 1 },
+        geometry: { type: "Point", coordinates: [lng, lat] },
+      }));
+      if (points.length >= 2) {
+        features.unshift({
+          type: "Feature",
+          properties: {},
+          geometry: { type: "LineString", coordinates: points },
+        });
+      }
+      if (points.length >= 3) {
+        features.unshift({
+          type: "Feature",
+          properties: {},
+          geometry: {
+            type: "Polygon",
+            coordinates: [[...points, points[0]]],
+          },
+        });
+      }
+      const data = { type: "FeatureCollection", features };
       const source = map.current.getSource("boundary");
       if (source) source.setData(data);
-      else if (boundary.length >= 3) {
+      else {
         map.current.addSource("boundary", { type: "geojson", data });
         map.current.addLayer({
           id: "boundary-fill",
           type: "fill",
           source: "boundary",
+          filter: ["==", ["geometry-type"], "Polygon"],
           paint: { "fill-color": "#ffcf24", "fill-opacity": 0.14 },
         });
         map.current.addLayer({
           id: "boundary-line",
           type: "line",
           source: "boundary",
+          filter: ["==", ["geometry-type"], "LineString"],
           paint: { "line-color": "#0d2638", "line-width": 3 },
+        });
+        map.current.addLayer({
+          id: "boundary-points",
+          type: "circle",
+          source: "boundary",
+          filter: ["==", ["geometry-type"], "Point"],
+          paint: {
+            "circle-radius": 6,
+            "circle-color": "#ffcf24",
+            "circle-stroke-color": "#0d2638",
+            "circle-stroke-width": 2,
+          },
         });
       }
     };
@@ -182,5 +213,10 @@ export default function MapView({
     else map.current.once("load", update);
   }, [boundary]);
 
-  return <div className={`map-view ${compact ? "compact" : ""}`} ref={host} />;
+  return (
+    <div
+      className={`map-view ${compact ? "compact" : ""} ${boundaryEditor ? "boundary-editor" : ""} ${picker ? "location-picker" : ""}`}
+      ref={host}
+    />
+  );
 }

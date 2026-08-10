@@ -59,6 +59,21 @@ export default function OrganizationMapEditor({
           onChange({ ...value, latitude, longitude, zoom })
         }
       />
+      <div className={`map-tool-status ${tool}`} aria-live="polite">
+        {tool === "boundary" ? (
+          <>
+            <b>Boundary drawing is active.</b>{" "}
+            {value.boundary.length
+              ? `${value.boundary.length} point${value.boundary.length === 1 ? "" : "s"} placed. Add at least 3 points to form an area.`
+              : "Tap the corners of the managed area on the map."}
+          </>
+        ) : (
+          <>
+            <b>Center selection is active.</b> Tap the map to set its opening
+            center.
+          </>
+        )}
+      </div>
       <div className="map-editor-controls">
         <label>
           Latitude

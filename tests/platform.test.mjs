@@ -74,3 +74,37 @@ test("image enrichment is server-side, optional and cost limited", async () => {
   assert.match(edge, /gpt-4o-mini/);
   assert.match(client, /organization\.ai_enabled/);
 });
+
+test("admin onboarding exposes deployment type, fields and a clear empty state", async () => {
+  const admin = await read("src/pages/AdminPage.tsx");
+  assert.match(admin, /Create your first organization/);
+  assert.match(admin, /No organization to configure/);
+  assert.match(admin, /Civic · public places and contributions/);
+  assert.match(admin, /Commercial · inventory, materials and equipment/);
+  assert.match(admin, /value=\{createCollections\}/);
+  assert.match(admin, /Map and boundary/);
+});
+
+test("boundary drawing uses the current map tool and shows every point", async () => {
+  const map = await read("src/components/MapView.tsx");
+  const editor = await read("src/components/OrganizationMapEditor.tsx");
+  assert.match(map, /interactionMode\.current\.boundaryEditor/);
+  assert.match(map, /currentBoundary\.current/);
+  assert.match(map, /type: "Point"/);
+  assert.match(map, /type: "LineString"/);
+  assert.match(editor, /Boundary drawing is active/);
+  assert.match(editor, /Add at least 3 points to form an area/);
+});
+
+test("public browsing is organization-first, mobile-friendly and map-linked", async () => {
+  const home = await read("src/App.tsx");
+  const directory = await read("src/pages/DirectoryPage.tsx");
+  assert.doesNotMatch(home, /Search organizations/);
+  assert.match(home, /organization-grid/);
+  assert.match(directory, /collection-nav/);
+  assert.match(directory, /record-grid/);
+  assert.match(directory, /onSelect=\{openRecord\}/);
+  assert.match(directory, /record-detail-sheet/);
+  assert.match(directory, /floating-add/);
+  assert.doesNotMatch(directory, /SEARCH RESULTS/);
+});

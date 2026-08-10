@@ -4,7 +4,10 @@ import MapView from "../components/MapView";
 import {
   commercialCaptureFields,
   commercialCaptureKeys,
+  customCollectionFields,
   emptyCommercialCaptureData,
+  inventoryCaptureFields,
+  inventoryFieldRequired,
   type CommercialCaptureKey,
 } from "../lib/captureFields";
 import { navigate } from "../lib/route";
@@ -31,6 +34,13 @@ type EnrichmentResponse = {
   suggestions?: Submission["ai_suggestions"];
 };
 
+type PreparedPhoto = {
+  upload: File;
+  analysisDataUrl: string;
+  originalBytes: number;
+  uploadBytes: number;
+};
+
 function localDateTime(isoDate: string | null) {
   if (!isoDate) return "";
   const date = new Date(isoDate);
@@ -51,7 +61,7 @@ function browserLocation(): Promise<Point | null> {
           source: "browser_gps",
         }),
       () => resolve(null),
-      { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 },
     );
   });
 }
@@ -65,9 +75,9 @@ function fileAsDataUrl(file: Blob): Promise<string> {
   });
 }
 
-async function analysisImage(file: File) {
+async function prepareSubmissionPhoto(file: File): Promise<PreparedPhoto> {
   const bitmap = await createImageBitmap(file);
-  const maximum = 1280;
+  const maximum = 1920;
   const ratio = Math.min(1, maximum / Math.max(bitmap.width, bitmap.height));
   const canvas = document.createElement("canvas");
   canvas.width = Math.max(1, Math.round(bitmap.width * ratio));
@@ -76,15 +86,53 @@ async function analysisImage(file: File) {
   if (!context) throw new Error("This browser cannot prepare the photo.");
   context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
   bitmap.close();
-  const blob = await new Promise<Blob>((resolve, reject) =>
+  const uploadBlob = await new Promise<Blob>((resolve, reject) =>
     canvas.toBlob(
       (value) =>
         value ? resolve(value) : reject(new Error("Photo preparation failed.")),
       "image/jpeg",
-      0.78,
+      0.8,
     ),
   );
-  return fileAsDataUrl(blob);
+  const analysisMaximum = 1280;
+  const analysisRatio = Math.min(
+    1,
+    analysisMaximum / Math.max(canvas.width, canvas.height),
+  );
+  const analysisCanvas = document.createElement("canvas");
+  analysisCanvas.width = Math.max(1, Math.round(canvas.width * analysisRatio));
+  analysisCanvas.height = Math.max(
+    1,
+    Math.round(canvas.height * analysisRatio),
+  );
+  analysisCanvas
+    .getContext("2d")
+    ?.drawImage(canvas, 0, 0, analysisCanvas.width, analysisCanvas.height);
+  const analysisBlob = await new Promise<Blob>((resolve, reject) =>
+    analysisCanvas.toBlob(
+      (value) =>
+        value
+          ? resolve(value)
+          : reject(new Error("AI photo preparation failed.")),
+      "image/jpeg",
+      0.74,
+    ),
+  );
+  const baseName = file.name.replace(/\.[^.]+$/, "") || "material-pin-photo";
+  return {
+    upload: new File([uploadBlob], `${baseName}.jpg`, {
+      type: "image/jpeg",
+      lastModified: file.lastModified,
+    }),
+    analysisDataUrl: await fileAsDataUrl(analysisBlob),
+    originalBytes: file.size,
+    uploadBytes: uploadBlob.size,
+  };
+}
+
+function fileSize(bytes: number) {
+  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 function CameraIcon() {
@@ -117,6 +165,9 @@ export default function SubmitPage({
   );
   const [customData, setCustomData] = useState<Record<string, string>>({});
   const [photo, setPhoto] = useState<File | null>(null);
+  const [preparedPhoto, setPreparedPhoto] = useState<PreparedPhoto | null>(
+    null,
+  );
   const [preview, setPreview] = useState("");
   const [photoTakenAt, setPhotoTakenAt] = useState<string | null>(null);
   const [point, setPoint] = useState<Point | null>(null);
@@ -239,6 +290,7 @@ export default function SubmitPage({
     if (suggestions.category) setCategory(suggestions.category);
     if (suggestions.quantity && Number.isFinite(Number(suggestions.quantity)))
       setQuantity(suggestions.quantity);
+    if (suggestions.unit) setUnit(suggestions.unit);
     if (suggestions.keywords?.length)
       setKeywords(suggestions.keywords.join(", "));
     for (const field of suggestions.fields || []) {
@@ -256,11 +308,10 @@ export default function SubmitPage({
     }
   }
 
-  async function analyzeSelectedPhoto(file: File) {
+  async function analyzeSelectedPhoto(imageDataUrl: string) {
     if (!organization?.ai_enabled) return;
     setAnalysisState("analyzing");
     try {
-      const imageDataUrl = await analysisImage(file);
       const { data, error } = await requireSupabase().functions.invoke(
         "enrich-submission",
         {
@@ -284,11 +335,13 @@ export default function SubmitPage({
   async function selectPhoto(file: File | null) {
     if (!file || !organization) return;
     setPhoto(file);
+    setPreparedPhoto(null);
     setPhotoTakenAt(null);
     setPoint(null);
     setAiSuggestions(null);
+    setAnalysisState("idle");
     setPreparing(true);
-    setStatus("Reading the photo…");
+    setStatus("Preparing a smaller photo…");
 
     const metadataTask = (async () => {
       const [coordinates, metadata] = await Promise.all([
@@ -319,8 +372,21 @@ export default function SubmitPage({
       return current;
     })();
 
-    await Promise.all([metadataTask, analyzeSelectedPhoto(file)]);
-    const mapped = await metadataTask;
+    const analysisTask = prepareSubmissionPhoto(file).then(async (prepared) => {
+      setPreparedPhoto(prepared);
+      await analyzeSelectedPhoto(prepared.analysisDataUrl);
+    });
+    let mapped: Point | null;
+    try {
+      [mapped] = await Promise.all([metadataTask, analysisTask]);
+    } catch {
+      setPreparing(false);
+      setAnalysisState("unavailable");
+      setStatus(
+        "This photo could not be prepared. Try taking another photo or choose a JPEG, PNG or WebP image.",
+      );
+      return;
+    }
     setStatus(
       mapped
         ? mapped.source === "photo_exif"
@@ -341,7 +407,9 @@ export default function SubmitPage({
         `Current location captured (approximately ±${Math.round(current.accuracy || 0)} m).`,
       );
     } else {
-      setStatus("Current location was unavailable. Tap the map to place the pin.");
+      setStatus(
+        "Current location was unavailable. Tap the map to place the pin.",
+      );
     }
   }
 
@@ -357,33 +425,34 @@ export default function SubmitPage({
       return setStatus("Place the item on the map before submitting.");
     if (!recordId && !photo)
       return setStatus("Take or choose a photo before submitting.");
+    if (photo && !preparedPhoto)
+      return setStatus(
+        "Wait for the photo to finish preparing before submitting.",
+      );
 
     setSending(true);
-    setStatus("Sending for review…");
+    setStatus(photo ? "Uploading the optimized photo…" : "Saving the update…");
     const id = crypto.randomUUID();
     let photoPath: string | null = null;
     const client = requireSupabase();
     try {
       if (photo) {
-        const extension =
-          photo.name
-            .split(".")
-            .pop()
-            ?.replace(/[^a-z0-9]/gi, "") || "jpg";
-        photoPath = `${organization.id}/${id}.${extension}`;
+        photoPath = `${organization.id}/${id}.jpg`;
         const { error } = await client.storage
           .from("submission-media")
-          .upload(photoPath, photo, { contentType: photo.type, upsert: false });
+          .upload(photoPath, preparedPhoto!.upload, {
+            contentType: "image/jpeg",
+            upsert: false,
+          });
         if (error) throw error;
+        setStatus("Saving the item details…");
       }
 
       const configurableData = Object.fromEntries(
-        collection.fields
-          .filter(
-            (field) =>
-              !commercialCaptureKeys.has(field.key),
-          )
-          .map((field) => [field.key, customData[field.key] || ""]),
+        customCollectionFields(collection).map((field) => [
+          field.key,
+          customData[field.key] || "",
+        ]),
       );
       const data = {
         ...configurableData,
@@ -410,8 +479,11 @@ export default function SubmitPage({
         keywords: confirmedKeywords,
         data,
         collection_id: collection.id,
-        quantity: quantity !== "" ? Number(quantity) : null,
-        unit: unit.trim() || null,
+        quantity:
+          collection.kind !== "place" && quantity !== ""
+            ? Number(quantity)
+            : null,
+        unit: collection.kind !== "place" ? unit.trim() || null : null,
         public_visible: publicVisible,
         latitude: point.lat,
         longitude: point.lng,
@@ -461,7 +533,9 @@ export default function SubmitPage({
   if (!isMember)
     return (
       <main className="access-page">
-        <button className="access-back" onClick={() => navigate(`org/${slug}`)}>← Public site</button>
+        <button className="access-back" onClick={() => navigate(`org/${slug}`)}>
+          ← Public site
+        </button>
         <section className="access-card">
           <div className="brand">MATERIAL PIN</div>
           <small>EMPLOYEE ACCESS REQUIRED</small>
@@ -474,7 +548,8 @@ export default function SubmitPage({
 
   const mapLat = point?.lat ?? organization.center_lat;
   const mapLng = point?.lng ?? organization.center_lng;
-  const displayPhoto = preview || (target?.photo_path ? publicPhoto(target.photo_path) : "");
+  const displayPhoto =
+    preview || (target?.photo_path ? publicPhoto(target.photo_path) : "");
 
   if (step === "complete")
     return (
@@ -487,20 +562,32 @@ export default function SubmitPage({
         </header>
         <main className="submission-complete">
           <section className="submitted-card">
-            <span className="submitted-check" aria-hidden="true">✓</span>
+            <span className="submitted-check" aria-hidden="true">
+              ✓
+            </span>
             <small>SUBMITTED</small>
             <h1>Your photo is in review</h1>
             <p>
-              An administrator will verify it before it appears publicly. You
-              do not need to submit it again.
+              An administrator will verify it before it appears publicly. You do
+              not need to submit it again.
             </p>
             {displayPhoto && <img src={displayPhoto} alt="Submitted" />}
             <dl>
-              <div><dt>Item</dt><dd>{name}</dd></div>
-              <div><dt>Collection</dt><dd>{collection?.name}</dd></div>
+              <div>
+                <dt>Item</dt>
+                <dd>{name}</dd>
+              </div>
+              <div>
+                <dt>Collection</dt>
+                <dd>{collection?.name}</dd>
+              </div>
               <div>
                 <dt>GPS coordinates</dt>
-                <dd>{point ? `${point.lat.toFixed(6)}, ${point.lng.toFixed(6)}` : "Recorded"}</dd>
+                <dd>
+                  {point
+                    ? `${point.lat.toFixed(6)}, ${point.lng.toFixed(6)}`
+                    : "Recorded"}
+                </dd>
               </div>
             </dl>
           </section>
@@ -525,18 +612,24 @@ export default function SubmitPage({
             <b>MATERIAL PIN</b>
             <span>{organization.name}</span>
           </button>
-          <button onClick={() => navigate(`org/${organization.slug}`)}>Cancel</button>
+          <button onClick={() => navigate(`org/${organization.slug}`)}>
+            Cancel
+          </button>
         </header>
         <main className="capture-first">
           <div className="submission-progress" aria-label="Submission progress">
-            <b>1</b><span /><i>2</i>
+            <b>1</b>
+            <span />
+            <i>2</i>
           </div>
           <section className="capture-intro">
             <small>{recordId ? "UPDATE AN ENTRY" : "ADD TO THE MAP"}</small>
-            <h1>{recordId ? "Start with a new photo" : "First, take a photo"}</h1>
+            <h1>
+              {recordId ? "Start with a new photo" : "First, take a photo"}
+            </h1>
             <p>
-              The photo is the starting point. Material Pin will read its date and
-              location, then prepare details for you to review.
+              The photo is the starting point. Material Pin will read its date
+              and location, then prepare details for you to review.
             </p>
           </section>
 
@@ -558,7 +651,10 @@ export default function SubmitPage({
             <section className="capture-panel">
               {target?.photo_path && (
                 <div className="current-record-photo">
-                  <img src={publicPhoto(target.photo_path)} alt="Current entry" />
+                  <img
+                    src={publicPhoto(target.photo_path)}
+                    alt="Current entry"
+                  />
                   <span>Current photo</span>
                 </div>
               )}
@@ -568,7 +664,9 @@ export default function SubmitPage({
                     type="file"
                     accept="image/*"
                     capture="environment"
-                    onChange={(event) => selectPhoto(event.target.files?.[0] || null)}
+                    onChange={(event) =>
+                      selectPhoto(event.target.files?.[0] || null)
+                    }
                   />
                   <CameraIcon />
                   <strong>Take a photo</strong>
@@ -578,21 +676,31 @@ export default function SubmitPage({
                   <input
                     type="file"
                     accept="image/*"
-                    onChange={(event) => selectPhoto(event.target.files?.[0] || null)}
+                    onChange={(event) =>
+                      selectPhoto(event.target.files?.[0] || null)
+                    }
                   />
-                  <span className="upload-icon" aria-hidden="true">↑</span>
+                  <span className="upload-icon" aria-hidden="true">
+                    ↑
+                  </span>
                   <strong>Choose a photo</strong>
                   <small>Use one already on this device</small>
                 </label>
               </div>
               {recordId && target && (
-                <button className="review-without-photo" onClick={reviewExisting}>
+                <button
+                  className="review-without-photo"
+                  onClick={reviewExisting}
+                >
                   Review the existing details without a new photo
                 </button>
               )}
             </section>
           )}
-          <p className="capture-privacy">Your signed-in employee account and every inventory change are recorded.</p>
+          <p className="capture-privacy">
+            Your signed-in employee account and every inventory change are
+            recorded.
+          </p>
         </main>
       </div>
     );
@@ -604,16 +712,22 @@ export default function SubmitPage({
           <b>← PHOTO</b>
           <span>{organization.name}</span>
         </button>
-        <button onClick={() => navigate(`org/${organization.slug}`)}>Cancel</button>
+        <button onClick={() => navigate(`org/${organization.slug}`)}>
+          Cancel
+        </button>
       </header>
       <main className="submission-review">
         <div className="submission-progress" aria-label="Submission progress">
-          <i>✓</i><span /><b>2</b>
+          <i>✓</i>
+          <span />
+          <b>2</b>
         </div>
         <div className="review-heading">
           <small>REVIEW BEFORE SENDING</small>
           <h1>Check what Material Pin found</h1>
-          <p>Correct anything that is not right, confirm the pin, then submit.</p>
+          <p>
+            Correct anything that is not right, confirm the pin, then submit.
+          </p>
         </div>
 
         <form onSubmit={submit}>
@@ -622,19 +736,34 @@ export default function SubmitPage({
               {displayPhoto ? (
                 <img src={displayPhoto} alt="Photo being submitted" />
               ) : (
-                <div className="review-photo-empty">Using the existing photo</div>
+                <div className="review-photo-empty">
+                  Using the existing photo
+                </div>
               )}
               <button type="button" onClick={() => setStep("photo")}>
                 {photo ? "Retake or change photo" : "Add a new photo"}
               </button>
+              {photo && preparedPhoto && (
+                <small className="photo-optimization-note">
+                  Optimized for faster upload:{" "}
+                  {fileSize(preparedPhoto.originalBytes)} →{" "}
+                  {fileSize(preparedPhoto.uploadBytes)}
+                </small>
+              )}
             </div>
             <div className="review-map-card">
               <div className="review-map-heading">
                 <div>
                   <small>LOCATION</small>
-                  <strong>{point ? "Pin found—tap the map to adjust" : "Place the pin"}</strong>
+                  <strong>
+                    {point
+                      ? "Pin found—tap the map to adjust"
+                      : "Place the pin"}
+                  </strong>
                 </div>
-                <button type="button" onClick={locate}>Use my location</button>
+                <button type="button" onClick={locate}>
+                  Use my location
+                </button>
               </div>
               <MapView
                 latitude={mapLat}
@@ -649,47 +778,79 @@ export default function SubmitPage({
               />
               <div className="coordinate-readout">
                 <span>GPS coordinates</span>
-                <code>{point ? `${point.lat.toFixed(6)}, ${point.lng.toFixed(6)}` : "Location required"}</code>
+                <code>
+                  {point
+                    ? `${point.lat.toFixed(6)}, ${point.lng.toFixed(6)}`
+                    : "Location required"}
+                </code>
               </div>
             </div>
           </section>
 
-          <section className={`review-details-card ${analysisState === "complete" ? "ai-filled" : ""}`}>
+          <section
+            className={`review-details-card ${analysisState === "complete" ? "ai-filled" : ""}`}
+          >
             <div className="review-card-title">
               <div>
                 <small>PHOTO DETAILS</small>
                 <h2>Review and edit</h2>
               </div>
               {analysisState === "complete" && <span>Filled from photo</span>}
-              {analysisState === "unavailable" && <span className="neutral">AI unavailable—enter details</span>}
+              {analysisState === "unavailable" && (
+                <span className="neutral">AI unavailable—enter details</span>
+              )}
             </div>
 
             <div className="review-field-grid">
               <label>
                 Collection
-                <select value={collectionId} onChange={(event) => setCollectionId(event.target.value)} required>
-                  {collections.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+                <select
+                  value={collectionId}
+                  onChange={(event) => setCollectionId(event.target.value)}
+                  required
+                >
+                  {collections.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.name}
+                    </option>
+                  ))}
                 </select>
               </label>
               <label>
                 Item name
-                <input value={name} onChange={(event) => setName(event.target.value)} required maxLength={140} />
+                <input
+                  value={name}
+                  onChange={(event) => setName(event.target.value)}
+                  required
+                  maxLength={140}
+                />
               </label>
               <label className="wide-field">
                 Description
-                <textarea value={description} onChange={(event) => setDescription(event.target.value)} rows={4} required maxLength={2000} />
+                <textarea
+                  value={description}
+                  onChange={(event) => setDescription(event.target.value)}
+                  rows={4}
+                  required
+                  maxLength={2000}
+                />
               </label>
               <label>
                 Category
-                <input value={category} onChange={(event) => setCategory(event.target.value)} required maxLength={100} />
-              </label>
-              <label>
-                Quantity
-                <input value={quantity} onChange={(event) => setQuantity(event.target.value)} type="number" min="0" step="any" required />
+                <input
+                  value={category}
+                  onChange={(event) => setCategory(event.target.value)}
+                  required
+                  maxLength={100}
+                />
               </label>
               <label className="wide-field">
                 Search keywords
-                <input value={keywords} onChange={(event) => setKeywords(event.target.value)} placeholder="tree, shade, damaged branch" />
+                <input
+                  value={keywords}
+                  onChange={(event) => setKeywords(event.target.value)}
+                  placeholder="tree, shade, damaged branch"
+                />
                 <small>Separate words or short phrases with commas.</small>
               </label>
               <label className="capture-date-field wide-field">
@@ -697,72 +858,119 @@ export default function SubmitPage({
                 <input
                   type="datetime-local"
                   value={localDateTime(photoTakenAt)}
-                  onChange={(event) => setPhotoTakenAt(event.target.value ? new Date(event.target.value).toISOString() : null)}
+                  onChange={(event) =>
+                    setPhotoTakenAt(
+                      event.target.value
+                        ? new Date(event.target.value).toISOString()
+                        : null,
+                    )
+                  }
                   required={!recordId || Boolean(photo)}
                 />
                 <small>Filled from the photo when available.</small>
               </label>
             </div>
 
+            {collection?.kind !== "place" && (
               <fieldset className="inventory-capture-fields">
                 <legend>Inventory details</legend>
-                {commercialCaptureFields.map((field) => (
-                  <label key={field.key}>
-                    {field.label}
-                    <input
-                      value={commercialData[field.key]}
-                      onChange={(event) => setCommercialData((current) => ({ ...current, [field.key]: event.target.value }))}
-                      placeholder={field.placeholder}
-                      required={field.required}
-                    />
-                  </label>
-                ))}
-                <label>
-                  Unit
-                  <input value={unit} onChange={(event) => setUnit(event.target.value)} placeholder="pieces, feet, cases" />
-                </label>
+                <p>
+                  AI fills what it can see. Review the values and complete only
+                  the details marked Required.
+                </p>
+                {inventoryCaptureFields.map((field) => {
+                  const required = inventoryFieldRequired(
+                    collection,
+                    field.key,
+                  );
+                  return (
+                    <label key={field.key}>
+                      <span>
+                        {field.label}
+                        <small>{required ? "Required" : "Optional"}</small>
+                      </span>
+                      {field.key === "quantity" ? (
+                        <input
+                          value={quantity}
+                          onChange={(event) => setQuantity(event.target.value)}
+                          type="number"
+                          min="0"
+                          step="any"
+                          placeholder={field.placeholder}
+                          required={required}
+                        />
+                      ) : field.key === "unit" ? (
+                        <input
+                          value={unit}
+                          onChange={(event) => setUnit(event.target.value)}
+                          placeholder={field.placeholder}
+                          required={required}
+                        />
+                      ) : (
+                        <input
+                          value={commercialData[field.key]}
+                          onChange={(event) =>
+                            setCommercialData((current) => ({
+                              ...current,
+                              [field.key]: event.target.value,
+                            }))
+                          }
+                          type={field.type}
+                          placeholder={field.placeholder}
+                          required={required}
+                        />
+                      )}
+                    </label>
+                  );
+                })}
               </fieldset>
+            )}
 
             <label className="visibility-choice wide-field">
-              <input type="checkbox" checked={publicVisible} onChange={(event) => setPublicVisible(event.target.checked)} />
-              <span><b>Show this item on the public site</b><small>Turn this off for employee-only inventory, equipment or site information.</small></span>
+              <input
+                type="checkbox"
+                checked={publicVisible}
+                onChange={(event) => setPublicVisible(event.target.checked)}
+              />
+              <span>
+                <b>Show this item on the public site</b>
+                <small>
+                  Turn this off for employee-only inventory, equipment or site
+                  information.
+                </small>
+              </span>
             </label>
 
-            {collection?.fields
-              .filter(
-                (field) =>
-                  !commercialCaptureKeys.has(field.key),
-              )
-              .map((field) => (
-                <label key={field.key}>
-                  {field.label}
-                  {field.type === "boolean" ? (
-                    <input
-                      checked={customData[field.key] === "true"}
-                      onChange={(event) =>
-                        setCustomData((current) => ({
-                          ...current,
-                          [field.key]: String(event.target.checked),
-                        }))
-                      }
-                      type="checkbox"
-                      required={field.required}
-                    />
-                  ) : (
-                    <input
-                      value={customData[field.key] || ""}
-                      onChange={(event) =>
-                        setCustomData((current) => ({
-                          ...current,
-                          [field.key]: event.target.value,
-                        }))
-                      }
-                      type={field.type}
-                      required={field.required}
-                    />
-                  )}
-                </label>
-              ))}
+            {customCollectionFields(collection).map((field) => (
+              <label key={field.key}>
+                {field.label}
+                {field.type === "boolean" ? (
+                  <input
+                    checked={customData[field.key] === "true"}
+                    onChange={(event) =>
+                      setCustomData((current) => ({
+                        ...current,
+                        [field.key]: String(event.target.checked),
+                      }))
+                    }
+                    type="checkbox"
+                    required={field.required}
+                  />
+                ) : (
+                  <input
+                    value={customData[field.key] || ""}
+                    onChange={(event) =>
+                      setCustomData((current) => ({
+                        ...current,
+                        [field.key]: event.target.value,
+                      }))
+                    }
+                    type={field.type}
+                    required={field.required}
+                  />
+                )}
+              </label>
+            ))}
 
             {!!aiSuggestions?.warnings?.length && (
               <p className="ai-review-note">
@@ -775,7 +983,9 @@ export default function SubmitPage({
             <div>
               <h2>Ready to send?</h2>
               <p>An administrator will review this before it is published.</p>
-              <p className="notice" aria-live="polite">{status}</p>
+              <p className="notice" aria-live="polite">
+                {status}
+              </p>
             </div>
             <button disabled={sending || !point || (!recordId && !photo)}>
               {sending ? "Submitting…" : "Submit for review"}

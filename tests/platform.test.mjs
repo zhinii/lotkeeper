@@ -191,13 +191,17 @@ test("employee photo review uses consistent inventory fields and visibility", as
   assert.match(submit, /publicVisible/);
   assert.match(submit, /Show this item on the public site/);
   assert.match(submit, /Quantity/);
-  assert.match(submit, /quantity: quantity !== ""/);
-  assert.match(captureFields, /SKU # \/ asset ID/);
+  assert.match(submit, /collection\.kind !== "place"/);
+  assert.match(captureFields, /SKU \/ asset ID/);
   assert.match(captureFields, /Storage location \/ bin/);
   assert.match(captureFields, /Condition/);
   assert.match(captureFields, /Manufacturer \/ brand/);
   assert.match(captureFields, /Lot \/ serial number/);
-  assert.match(collections, /included\s+automatically/);
+  assert.match(collections, /Leave them optional unless/);
+  assert.match(collections, /Required/);
+  assert.doesNotMatch(collections, /Identifier/);
+  assert.doesNotMatch(collections, /Last verified/);
+  assert.match(submit, /inventoryFieldRequired/);
   assert.match(submit, /without a new photo/);
 });
 
@@ -205,11 +209,15 @@ test("submitters review AI and EXIF values before a locked confirmation", async 
   const submit = await read("src/pages/SubmitPage.tsx");
   const edge = await read("supabase/functions/enrich-submission/index.ts");
   assert.match(submit, /SUBMITTED/);
-  assert.match(submit, /You\s+do not need to submit it again/);
+  assert.match(submit, /You\s+do\s+not\s+need\s+to\s+submit\s+it\s+again/);
   assert.match(submit, /Take a photo/);
   assert.match(submit, /Choose a photo/);
   assert.match(submit, /setStep\("review"\)/);
   assert.match(submit, /image_data_url/);
+  assert.match(submit, /prepareSubmissionPhoto/);
+  assert.match(submit, /maximum = 1920/);
+  assert.match(submit, /preparedPhoto!\.upload/);
+  assert.match(submit, /Optimized for faster upload/);
   assert.ok(
     submit.indexOf("image_data_url") <
       submit.indexOf('.from("submissions").insert'),

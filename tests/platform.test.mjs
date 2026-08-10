@@ -136,6 +136,8 @@ test("public browsing combines image, text and filter search with the map", asyn
   assert.match(directory, /Employee sign in/);
   assert.match(directory, /Employee workspace/);
   assert.match(directory, /Admin console/);
+  assert.match(directory, /className="floating-add"/);
+  assert.match(directory, /<strong>Add item<\/strong>/);
   assert.match(directory, /pins"\} shown|pins.*shown/s);
   assert.match(styles, /\.material-map-panel \.map-count[\s\S]*bottom:\s*auto/);
   assert.match(styles, /\.directory-employee\.active/);
@@ -207,6 +209,7 @@ test("employee photo review uses consistent inventory fields and visibility", as
 
 test("submitters review AI and EXIF values before a locked confirmation", async () => {
   const submit = await read("src/pages/SubmitPage.tsx");
+  const cropper = await read("src/components/PhotoCropper.tsx");
   const edge = await read("supabase/functions/enrich-submission/index.ts");
   assert.match(submit, /SUBMITTED/);
   assert.match(submit, /You\s+do\s+not\s+need\s+to\s+submit\s+it\s+again/);
@@ -215,6 +218,20 @@ test("submitters review AI and EXIF values before a locked confirmation", async 
   assert.match(submit, /setStep\("review"\)/);
   assert.match(submit, /image_data_url/);
   assert.match(submit, /prepareSubmissionPhoto/);
+  assert.match(submit, /"photo" \| "crop" \| "review" \| "complete"/);
+  assert.match(submit, /await cropPhoto\(sourcePhoto, crop\)/);
+  assert.match(submit, /Only the area inside the frame will be analyzed and saved/);
+  assert.match(submit, /Use this crop/);
+  assert.match(cropper, /canvas\.toBlob/);
+  assert.match(cropper, /Cropped photo preview/);
+  assert.match(cropper, /Move left or right/);
+  assert.match(cropper, /createImageBitmap cannot decode/);
+  assert.match(cropper, /This photo cannot be opened/);
+  assert.match(submit, /disabled=\{preparing \|\| !cropReady\}/);
+  const cropStart = submit.indexOf("async function confirmCrop");
+  const cropCall = submit.indexOf("await cropPhoto", cropStart);
+  const aiCall = submit.indexOf("await analyzeSelectedPhoto", cropCall);
+  assert.ok(cropStart < cropCall && cropCall < aiCall);
   assert.match(submit, /maximum = 1920/);
   assert.match(submit, /preparedPhoto!\.upload/);
   assert.match(submit, /Optimized for faster upload/);
@@ -241,6 +258,6 @@ test("Material Pin is installable while retaining the GitHub Pages website", asy
   assert.match(manifest, /"name": "Material Pin"/);
   assert.match(manifest, /icon-192\.png/);
   assert.match(manifest, /icon-512\.png/);
-  assert.match(worker, /material-pin-shell-v2/);
+  assert.match(worker, /material-pin-shell-v3/);
   assert.match(worker, /request\.mode === "navigate"/);
 });

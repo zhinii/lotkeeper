@@ -3929,7 +3929,7 @@ body:has(.login-page) {
 
 .submission-progress {
   display: flex;
-  width: 150px;
+  width: 230px;
   align-items: center;
   margin: 0 auto 28px;
 }
@@ -3956,9 +3956,131 @@ body:has(.login-page) {
 }
 
 .submission-progress span {
-  width: 78px;
+  flex: 1;
   height: 3px;
   background: #cbd5cd;
+}
+
+.crop-panel {
+  max-width: 920px;
+  margin: 0 auto;
+  overflow: hidden;
+  border: 1px solid #d4ddd5;
+  border-radius: 24px;
+  background: #fff;
+  box-shadow: 0 14px 38px #2740350d;
+}
+
+.photo-cropper {
+  display: grid;
+  grid-template-columns: minmax(0, 1.45fr) minmax(230px, 0.55fr);
+}
+
+.crop-canvas-wrap {
+  position: relative;
+  min-width: 0;
+  overflow: hidden;
+  background: #14211c;
+}
+
+.crop-canvas-wrap > img {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.crop-canvas-wrap canvas {
+  display: block;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  background: #0e1713;
+}
+
+.crop-canvas-wrap > span {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  padding: 8px 11px;
+  color: #fff;
+  background: #10261ddd;
+  border: 1px solid #ffffff55;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.crop-load-error {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  gap: 7px;
+  padding: 30px;
+  color: #fff;
+  background: #14211c;
+  text-align: center;
+}
+
+.crop-load-error strong,
+.crop-load-error small {
+  display: block;
+}
+
+.crop-load-error small {
+  color: #d1ddd6;
+  line-height: 1.45;
+}
+
+.crop-controls {
+  display: grid;
+  align-content: center;
+  gap: 22px;
+  padding: 26px;
+  background: #f6f8f5;
+}
+
+.crop-controls label {
+  display: grid;
+  gap: 9px;
+  color: #304139;
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.crop-controls input[type="range"] {
+  width: 100%;
+  accent-color: var(--public-green, #24704e);
+}
+
+.crop-step-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 16px;
+  border-top: 1px solid #d4ddd5;
+}
+
+.crop-step-actions button {
+  min-height: 48px;
+  padding: 12px 18px;
+  border: 1px solid #9eada3;
+  border-radius: 11px;
+  background: #fff;
+  font-weight: 850;
+}
+
+.crop-step-actions .crop-confirm {
+  min-width: 180px;
+  color: #14251e;
+  border-color: #f0c52f;
+  background: #f0c52f;
+}
+
+.crop-step-actions .crop-confirm:disabled {
+  cursor: wait;
+  opacity: 0.48;
 }
 
 .capture-intro,
@@ -4402,10 +4524,33 @@ body:has(.login-page) {
 
   .capture-actions,
   .photo-preparing,
+  .photo-cropper,
   .visual-review-grid,
   .review-field-grid,
   .review-submit-card {
     grid-template-columns: 1fr;
+  }
+
+  .crop-panel {
+    border-radius: 18px;
+  }
+
+  .crop-controls {
+    gap: 16px;
+    padding: 20px;
+  }
+
+  .crop-step-actions {
+    display: grid;
+    grid-template-columns: 0.7fr 1.3fr;
+    position: sticky;
+    bottom: 0;
+    padding-bottom: calc(16px + env(safe-area-inset-bottom));
+    background: #fff;
+  }
+
+  .crop-step-actions .crop-confirm {
+    min-width: 0;
   }
 
   .capture-choice {

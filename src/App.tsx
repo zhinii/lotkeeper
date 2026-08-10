@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import InstallAppButton from "./components/InstallAppButton";
 import AdminPage from "./pages/AdminPage";
 import DirectoryPage from "./pages/DirectoryPage";
+import StaffPage from "./pages/StaffPage";
 import SubmitPage from "./pages/SubmitPage";
 import { configured, requireSupabase } from "./lib/supabase";
 import { navigate, routeFromHash } from "./lib/route";
@@ -11,12 +12,12 @@ function SetupPage() {
   return (
     <main className="setup-page">
       <div className="brand">
-        LOTKEEPER <span>V2</span>
+        MATERIAL PIN
       </div>
       <h1>Connect the dedicated database</h1>
       <p>
-        This clean rebuild intentionally contains no fallback credentials. Add
-        the new Lotkeeper Supabase URL and publishable key to the deployment
+        This application intentionally contains no fallback credentials. Add
+        the Material Pin Supabase URL and publishable key to the deployment
         environment.
       </p>
       <code>
@@ -24,7 +25,7 @@ function SetupPage() {
         <br />
         VITE_SUPABASE_ANON_KEY
       </code>
-      <p>Page Steel remains isolated and untouched.</p>
+      <p>Each deployment keeps its own access rules and organization data.</p>
     </main>
   );
 }
@@ -43,20 +44,23 @@ function HomePage() {
     <div className="home-page">
       <header className="topbar">
         <div>
-          <div className="brand">LOTKEEPER</div>
-          <small>Visual places and inventory</small>
+          <div className="brand">MATERIAL PIN</div>
+          <small>Find materials, inventory and site assets</small>
         </div>
         <div className="home-actions">
           <InstallAppButton />
+          <button className="quiet-button" onClick={() => navigate("staff")}>
+            Employee
+          </button>
           <button className="quiet-button" onClick={() => navigate("admin")}>
             Admin
           </button>
         </div>
       </header>
       <section className="hero">
-        <p>CHOOSE A PLACE</p>
-        <h1>What would you like to explore?</h1>
-        <small>Select an organization to view its places, items and map.</small>
+        <p>CHOOSE A SITE</p>
+        <h1>Find what is there and where it is.</h1>
+        <small>Select an organization to open its visual material map.</small>
       </section>
       <main className="organization-list">
         <div className="section-heading">
@@ -70,18 +74,12 @@ function HomePage() {
               key={organization.id}
               onClick={() => navigate(`org/${organization.slug}`)}
             >
-              <span className={`mode-badge ${organization.mode}`}>
-                {organization.mode}
-              </span>
+              <span className="organization-pin" aria-hidden="true">●</span>
               <div>
                 <strong>{organization.name}</strong>
                 <small>
                   {organization.collections
-                    .filter(
-                      (item) =>
-                        item.publicVisible ||
-                        organization.mode === "commercial",
-                    )
+                    .filter((item) => item.publicVisible)
                     .map((item) => item.name)
                     .join(" · ")}
                 </small>
@@ -111,6 +109,7 @@ export default function App() {
   if (!configured) return <SetupPage />;
   const parts = route.split("/");
   if (parts[0] === "admin") return <AdminPage />;
+  if (parts[0] === "staff") return <StaffPage />;
   if (parts[0] === "org" && parts[1]) return <DirectoryPage slug={parts[1]} />;
   if (parts[0] === "submit" && parts[1])
     return <SubmitPage slug={parts[1]} recordId={parts[2] || null} />;

@@ -7,7 +7,7 @@ export const configured = Boolean(url && key && !url.includes("YOUR-PROJECT"));
 export const supabase = configured ? createClient(url!, key!, { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true } }) : null;
 
 export function requireSupabase() {
-  if (!supabase) throw new Error("Lotkeeper has not been connected to its dedicated Supabase project.");
+  if (!supabase) throw new Error("Material Pin has not been connected to its Supabase project.");
   return supabase;
 }
 export function publicPhoto(path: string | null) {

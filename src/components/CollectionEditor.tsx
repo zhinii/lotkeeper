@@ -138,21 +138,11 @@ export default function CollectionEditor({
                 />
                 Show this list on the public site
               </label>
-              <label>
-                <input
-                  type="checkbox"
-                  checked={collection.publicSubmit}
-                  onChange={(event) =>
-                    update(index, { publicSubmit: event.target.checked })
-                  }
-                />
-                Let visitors suggest new entries
-              </label>
             </div>
             <h4>What information should each entry include?</h4>
             <p className="field-help">
               Item name, description, quantity, photo date and GPS are included
-              automatically. Commercial captures also include SKU, unit,
+              automatically. Employee captures also include SKU, unit,
               location, condition, brand and lot or serial number. Add only the
               extra information this list needs.
             </p>

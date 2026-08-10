@@ -1,82 +1,56 @@
-# Lotkeeper V2
+# Material Pin
 
-Lotkeeper is an installable, mobile-first visual location and inventory finder for civic and commercial spaces. It joins photographs, map pins, descriptions, searchable fields and accountable activity in one system while remaining available as a normal website.
+Material Pin is an installable, mobile-first visual material and inventory finder. It combines item photos, map pins, searchable descriptions, SKU data, quantities, named locations and accountable updates in one system.
 
-## What it supports
+Live site: <https://zhinii.github.io/lotkeeper/>
 
-- **Civic deployments:** public maps and a photo-first, account-free submission flow. A visitor takes or chooses a photo; Lotkeeper reads EXIF date/GPS, falls back to current GPS, optionally suggests the collection, name, description, category, quantity, keywords and supported fields, then presents everything on a visual review screen before submission. Administrators still approve or reject every change.
-- **Commercial deployments:** private or public sites, custom collections, persistent assets, consumable inventory, quantities and units, search logging, inventory-use transactions, and administrator alerts.
-- **Every deployment:** organization branding, configurable opening map and boundary, configurable modules and fields, field-level public/private storage, responsive map/list search, record history, and resolved-alert reopening.
-- **Optional AI:** server-side photo suggestions that are shown before submission and remain editable. AI is off by default, limited per organization by a server-written usage ledger, and never publishes without administrator review.
-- **Installable web app:** a manifest, home-screen icons and service worker provide standalone launch and an offline application shell from the same GitHub Pages deployment.
+## Three access layers
 
-## What V2 does not include yet
+- **Public:** choose an organization, view its public items, search by text or photo, filter like a product catalog, and see matching pins on the map. Public visitors cannot change records.
+- **Employee:** sign in to add a photo and pin, update an existing item, record inventory use, and mark the item public or employee-only. GPS can come from photo EXIF, browser location or a manually adjusted map pin.
+- **Administrator:** review employee submissions, edit every standard field, change quantities and coordinates, archive items, import inventory CSV files, map generic inventory pins, configure organizations, and review search activity.
 
-- Reservations, ticketing, payments, purchasing or full ERP/accounting functions.
-- Automatic inventory reconciliation with external POS/ERP systems.
-- Turn-by-turn navigation, offline map tiles, background submission syncing or separately maintained native mobile apps. The installable shell can open offline, but maps and database actions still require a connection.
-- A no-code staff invitation screen; initial users are invited through Supabase Authentication. Invited administrators can use a password or secure email sign-in link.
-- Guaranteed image identification. AI suggestions are search metadata and must be reviewed by a person.
+Every captured item supports a name, description, quantity, unit, SKU or asset ID, named location, category, GPS coordinates, visibility, timestamps and the account that updated it. Additional organization-specific fields remain configurable.
+
+## Search design
+
+Text search matches names, descriptions, categories, keywords, SKUs, manufacturers and named locations. Filters narrow by item group, category, availability and location while the map remains visible.
+
+Optional photo search sends a compressed preview to the server-side OpenAI vision workflow. The API returns visible descriptors, readable product/SKU clues and alternate search terms; Material Pin then searches the catalog text. OpenAI text embedding models do not accept images, so this is the practical first implementation for a mixed inventory catalog. It is cost-limited per organization and the API key never enters the browser bundle.
+
+Each organization can maintain an **AI catalog guide** describing its business, common materials or assets, preferred terminology, identifier formats and facts the AI must not guess. This makes the same image workflow useful for steel service centers, salvage yards, warehouses and other specialized catalogs without changing code.
+
+## CSV inventory import
+
+Administrators can import `name`, `description`, `sku`, `quantity`, `unit`, `category`, `location`, `latitude`, `longitude`, `public`, `keywords`, `manufacturer`, `condition` and `serial` columns. Rows without coordinates use the map location selected during import and appear as generic pins until a photo is added.
 
 ## Architecture
 
-- React + TypeScript + Vite on GitHub Pages.
-- Progressive Web App manifest and service worker, using the same responsive code as the website.
-- MapLibre with OpenStreetMap raster tiles.
-- A dedicated Supabase project for Postgres, Authentication, Storage, RLS and the image-enrichment Edge Function.
-- OpenAI image understanding runs only inside the Edge Function. The browser never receives `OPENAI_API_KEY` or a Supabase service key.
+- React, TypeScript and Vite
+- GitHub Pages static hosting
+- Supabase Auth, PostgreSQL, Storage, Row-Level Security and Edge Functions
+- MapLibre with OpenStreetMap tiles
+- OpenAI Responses API for optional photo metadata and image-to-text search
+- Progressive Web App manifest and service worker
 
-Page Steel remains a separate archived application and database. Lotkeeper deployments share the dedicated Lotkeeper database by default and are isolated by `organization_id` plus row-level security. A private paid deployment can instead use its own Supabase project with the same schema.
-
-## Private organization users
-
-The current release does not yet include a no-code invitation screen. Create or
-invite the person under **Supabase → Authentication → Users**, then assign that
-authenticated user to the private organization in the SQL Editor:
-
-```sql
-insert into public.organization_members (organization_id, user_id, role)
-select organization.id, person.id, 'member'
-from public.organizations organization
-cross join auth.users person
-where organization.slug = 'your-organization-slug'
-  and lower(person.email) = lower('person@example.com')
-on conflict (organization_id, user_id)
-do update set role = excluded.role;
-```
-
-Use `member` for ordinary private-site access. Use `admin` only for someone who
-should review submissions and change the organization. The person signs in from
-the Lotkeeper manager login, then opens the private organization. A future
-release should replace this temporary database-assisted process with a simple
-People & Access screen.
+Organizations share the Material Pin database by default and are isolated by `organization_id` plus row-level security. A dedicated private deployment can use its own Supabase project with the same schema.
 
 ## Local setup
 
-1. Install dependencies with `pnpm install`.
-2. Create a separate Supabase project.
-3. Run [`supabase/schema.sql`](supabase/schema.sql) once in that project's SQL Editor.
-4. Copy `.env.example` to `.env.local` and add the project's URL and publishable key.
-5. Run `pnpm dev`.
+Copy `.env.example` to `.env.development.local` and set the public Supabase values:
 
-Do not place `OPENAI_API_KEY` in any `VITE_` variable. Apply the migrations, deploy [`supabase/functions/enrich-submission/index.ts`](supabase/functions/enrich-submission/index.ts) as `enrich-submission`, turn legacy JWT verification off, and save `OPENAI_API_KEY` as an encrypted Edge Function secret. The photo-first preview sends a browser-compressed copy to the Edge Function; the original is uploaded only after the person confirms the form. The implementation uses low-detail image input and Structured Outputs supported by the [OpenAI Images and Vision guide](https://developers.openai.com/api/docs/guides/images-vision) and [Structured Outputs guide](https://developers.openai.com/api/docs/guides/structured-outputs).
+```text
+VITE_SUPABASE_URL=...
+VITE_SUPABASE_ANON_KEY=...
+```
 
-## GitHub Pages
-
-Set these repository variables:
-
-- `VITE_SUPABASE_URL`
-- `VITE_SUPABASE_ANON_KEY`
-
-Then enable **Settings → Pages → Source: GitHub Actions**. Pushes to `main` run tests, build the relative-path Vite bundle and deploy Pages.
-
-## Database safety
-
-Public field values live in `records.data`. Private values live in the separate `record_private_data` table and are readable only by organization members. Public submissions enter `submissions` as `pending`; approval is performed by a security-definer database function after an administrator review. Storage uses separate private submission and public approved-image buckets.
-
-Run checks with:
+Keep `OPENAI_API_KEY` only in Supabase Edge Function secrets.
 
 ```powershell
+pnpm install
 pnpm test
 pnpm build
+pnpm dev
 ```
+
+For an existing database, run the SQL migrations in `supabase/migrations` in filename order and deploy `supabase/functions/enrich-submission`.

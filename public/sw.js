@@ -1,4 +1,4 @@
-const CACHE = "lotkeeper-shell-v1";
+const CACHE = "material-pin-shell-v2";
 const base = new URL("./", self.location.href);
 const shell = [
   base.href,

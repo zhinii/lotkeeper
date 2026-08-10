@@ -1,8 +1,8 @@
 {
   "id": "./",
-  "name": "Lotkeeper",
-  "short_name": "Lotkeeper",
-  "description": "Visual location and inventory finder for civic and commercial spaces.",
+  "name": "Material Pin",
+  "short_name": "Material Pin",
+  "description": "Visual material, inventory and site asset finder.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

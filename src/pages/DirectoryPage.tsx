@@ -1,21 +1,82 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import MapView from "../components/MapView";
-import { commercialCaptureFields } from "../lib/captureFields";
 import { navigate } from "../lib/route";
 import { publicPhoto, requireSupabase } from "../lib/supabase";
 import type { Organization, RecordItem } from "../types";
+
+type AvailabilityFilter = "all" | "available" | "empty" | "untracked";
+
+function itemLocation(item: RecordItem) {
+  return String(
+    item.data.location ||
+      item.data.location_code ||
+      item.data.storage_location ||
+      item.data.bin ||
+      "",
+  ).trim();
+}
+
+function searchableText(item: RecordItem) {
+  return [
+    item.name,
+    item.description,
+    item.category,
+    item.collection_id,
+    item.keywords.join(" "),
+    item.data.sku,
+    item.data.asset_id,
+    item.data.manufacturer,
+    item.data.location,
+    item.data.location_code,
+    item.data.storage_location,
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+}
+
+async function imagePreview(file: File) {
+  const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+    const element = new Image();
+    const url = URL.createObjectURL(file);
+    element.onload = () => {
+      URL.revokeObjectURL(url);
+      resolve(element);
+    };
+    element.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error("That image could not be opened."));
+    };
+    element.src = url;
+  });
+  const maxSide = 1280;
+  const scale = Math.min(1, maxSide / Math.max(image.width, image.height));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(image.width * scale));
+  canvas.height = Math.max(1, Math.round(image.height * scale));
+  canvas.getContext("2d")?.drawImage(image, 0, 0, canvas.width, canvas.height);
+  return canvas.toDataURL("image/jpeg", 0.76);
+}
 
 export default function DirectoryPage({ slug }: { slug: string }) {
   const [organization, setOrganization] = useState<Organization | null>(null);
   const [records, setRecords] = useState<RecordItem[]>([]);
   const [query, setQuery] = useState("");
   const [collection, setCollection] = useState("all");
+  const [category, setCategory] = useState("all");
+  const [availability, setAvailability] =
+    useState<AvailabilityFilter>("all");
+  const [locationFilter, setLocationFilter] = useState("all");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
   const [inventoryOpen, setInventoryOpen] = useState(false);
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(true);
+  const [imageSearching, setImageSearching] = useState(false);
+  const [imageSearchLabel, setImageSearchLabel] = useState("");
+  const [searchKind, setSearchKind] = useState<"text" | "image">("text");
   const [isMember, setIsMember] = useState(false);
+  const photoSearchInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     (async () => {
@@ -31,13 +92,15 @@ export default function DirectoryPage({ slug }: { slug: string }) {
         return;
       }
       setOrganization(org as Organization);
-      const { data: recordRows } = await client
-        .from("records")
-        .select("*")
-        .eq("organization_id", org.id)
-        .eq("status", "active")
-        .order("updated_at", { ascending: false });
-      const { data: authData } = await client.auth.getUser();
+      const [{ data: recordRows }, { data: authData }] = await Promise.all([
+        client
+          .from("records")
+          .select("*")
+          .eq("organization_id", org.id)
+          .eq("status", "active")
+          .order("updated_at", { ascending: false }),
+        client.auth.getUser(),
+      ]);
       let privateByRecord = new Map<string, Record<string, unknown>>();
       if (authData.user) {
         const [{ data: memberships }, { data: privateRows }] =
@@ -69,15 +132,6 @@ export default function DirectoryPage({ slug }: { slug: string }) {
     })();
   }, [slug]);
 
-  useEffect(() => {
-    if (!detailOpen) return;
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setDetailOpen(false);
-    };
-    addEventListener("keydown", closeOnEscape);
-    return () => removeEventListener("keydown", closeOnEscape);
-  }, [detailOpen]);
-
   const visibleCollections = useMemo(
     () =>
       organization?.collections.filter(
@@ -85,32 +139,114 @@ export default function DirectoryPage({ slug }: { slug: string }) {
       ) || [],
     [organization, isMember],
   );
-  const visibleRecords = useMemo(
+  const categories = useMemo(
     () =>
-      records.filter(
-        (item) =>
-          (collection === "all" || item.collection_id === collection) &&
-          `${item.name} ${item.description} ${item.category} ${item.keywords.join(" ")} ${JSON.stringify(item.data)}`
-            .toLowerCase()
-            .includes(query.trim().toLowerCase()),
-      ),
-    [records, query, collection],
+      [...new Set(records.map((item) => item.category).filter(Boolean))].sort(),
+    [records],
   );
+  const locations = useMemo(
+    () => [...new Set(records.map(itemLocation).filter(Boolean))].sort(),
+    [records],
+  );
+  const visibleRecords = useMemo(() => {
+    const terms = query
+      .trim()
+      .toLowerCase()
+      .split(/\s+/)
+      .filter(Boolean);
+    return records.filter((item) => {
+      if (collection !== "all" && item.collection_id !== collection) return false;
+      if (category !== "all" && item.category !== category) return false;
+      if (locationFilter !== "all" && itemLocation(item) !== locationFilter)
+        return false;
+      if (availability === "available" && !(item.quantity === null || item.quantity > 0))
+        return false;
+      if (availability === "empty" && item.quantity !== 0) return false;
+      if (availability === "untracked" && item.quantity !== null) return false;
+      const haystack = searchableText(item);
+      return searchKind === "image"
+        ? terms.some((term) => term.length > 2 && haystack.includes(term))
+        : terms.every((term) => haystack.includes(term));
+    });
+  }, [records, query, collection, category, availability, locationFilter, searchKind]);
+
   const selected = records.find((item) => item.id === selectedId) || null;
   const selectedCollection = visibleCollections.find(
     (item) => item.id === selected?.collection_id,
   );
-  const sectionName =
-    collection === "all"
-      ? "All entries"
-      : visibleCollections.find((item) => item.id === collection)?.name ||
-        "Entries";
 
-  function selectCollection(id: string) {
-    setCollection(id);
-    setSelectedId(null);
-    setDetailOpen(false);
-    setInventoryOpen(false);
+  async function logSearch(
+    searchType: "text" | "image" | "filter",
+    searchQuery = query,
+    resultCount = visibleRecords.length,
+  ) {
+    if (!organization) return;
+    await requireSupabase().rpc("log_material_search", {
+      target_organization: organization.id,
+      search_query: searchQuery || "Browse filters",
+      search_kind: searchType,
+      search_filters: {
+        collection,
+        category,
+        availability,
+        location: locationFilter,
+      },
+      matching_records: resultCount,
+    });
+  }
+
+  async function runImageSearch(file: File) {
+    if (!organization) return;
+    if (!file.type.startsWith("image/")) {
+      setMessage("Choose a photo to search.");
+      return;
+    }
+    setImageSearching(true);
+    setMessage("");
+    try {
+      const preview = await imagePreview(file);
+      const { data, error } = await requireSupabase().functions.invoke(
+        "enrich-submission",
+        {
+          body: {
+            organization_id: organization.id,
+            image_data_url: preview,
+            search_mode: true,
+          },
+        },
+      );
+      if (error) throw error;
+      const suggestions = data?.suggestions || {};
+      const searchText = [
+        suggestions.name,
+        suggestions.category,
+        ...(suggestions.keywords || []).slice(0, 6),
+        ...(suggestions.fields || []).slice(0, 2).map(
+          (field: { value?: string }) => field.value,
+        ),
+      ]
+        .filter(Boolean)
+        .join(" ");
+      if (!searchText) throw new Error("No searchable details were found.");
+      setQuery(searchText);
+      setImageSearchLabel(suggestions.name || "Photo search");
+      setSearchKind("image");
+      const terms = searchText.toLowerCase().split(/\s+/).filter(Boolean);
+      const count = records.filter((item) => {
+        const haystack = searchableText(item);
+        return terms.some((term) => haystack.includes(term));
+      }).length;
+      await logSearch("image", searchText, count);
+    } catch (error) {
+      setMessage(
+        error instanceof Error
+          ? error.message
+          : "Photo search is temporarily unavailable.",
+      );
+    } finally {
+      setImageSearching(false);
+      if (photoSearchInput.current) photoSearchInput.current.value = "";
+    }
   }
 
   function openRecord(id: string) {
@@ -119,47 +255,37 @@ export default function DirectoryPage({ slug }: { slug: string }) {
     setInventoryOpen(false);
   }
 
-  async function recordSearch() {
-    if (
-      !organization ||
-      organization.mode !== "commercial" ||
-      !isMember ||
-      !query.trim()
-    )
-      return;
-    await requireSupabase()
-      .from("search_events")
-      .insert({
-        organization_id: organization.id,
-        query: query.trim(),
-        result_count: visibleRecords.length,
-        opened_record_id: selected?.id || null,
-      });
-  }
-
   async function recordUse(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!selected) return;
     const form = new FormData(event.currentTarget);
     const amount = Number(form.get("amount"));
-    const { error } = await requireSupabase().rpc("record_inventory_use", {
+    const { data, error } = await requireSupabase().rpc("record_inventory_use", {
       target_record: selected.id,
       amount_used: amount,
       note_text: String(form.get("note") || ""),
     });
     if (error) return setMessage(error.message);
-    setMessage("Inventory use recorded and the administrator was alerted.");
+    setMessage("Inventory updated. The administrator can see this change.");
     setInventoryOpen(false);
     setRecords((items) =>
       items.map((item) =>
-        item.id === selected.id && item.quantity !== null
-          ? { ...item, quantity: Math.max(0, item.quantity - amount) }
-          : item,
+        item.id === selected.id ? { ...item, quantity: data } : item,
       ),
     );
   }
 
-  if (loading) return <div className="loading">Loading location…</div>;
+  function clearSearch() {
+    setQuery("");
+    setImageSearchLabel("");
+    setSearchKind("text");
+    setCollection("all");
+    setCategory("all");
+    setAvailability("all");
+    setLocationFilter("all");
+  }
+
+  if (loading) return <div className="loading">Loading material map…</div>;
   if (!organization)
     return (
       <div className="empty">
@@ -170,292 +296,86 @@ export default function DirectoryPage({ slug }: { slug: string }) {
     );
 
   return (
-    <div className="directory-page">
+    <div className="directory-page material-directory">
       <header className="directory-header">
-        <button
-          className="directory-back"
-          onClick={() => navigate("home")}
-          aria-label="Back to organizations"
-        >
-          ←
-        </button>
-        <div className="directory-identity">
-          <small>LOTKEEPER</small>
-          <strong>{organization.name}</strong>
+        <button className="directory-back" onClick={() => navigate("home")} aria-label="Back to organizations">←</button>
+        <div className="directory-identity"><small>MATERIAL PIN</small><strong>{organization.name}</strong></div>
+        <div className="directory-role-actions">
+          {isMember ? <span className="employee-badge">Employee</span> : <button onClick={() => navigate("staff")}>Employee sign in</button>}
+          <button className="directory-admin" onClick={() => navigate("admin")}>Admin</button>
         </div>
-        <button className="directory-admin" onClick={() => navigate("admin")}>
-          Admin
-        </button>
       </header>
 
-      <main className="directory-workspace">
-        <aside className="collection-nav" aria-label="Collections">
-          <div className="collection-nav-title">
-            <small>BROWSE</small>
-            <strong>Collections</strong>
+      <main className="material-workspace">
+        <section className="material-search-panel">
+          <div className="material-search-heading">
+            <small>FIND MATERIALS AND ASSETS</small>
+            <h1>Search this site</h1>
+            <p>Use words, a photo, or narrow the catalog with filters.</p>
           </div>
-          <button
-            className={collection === "all" ? "active" : ""}
-            onClick={() => selectCollection("all")}
-          >
-            <span className="collection-icon">⌂</span>
-            <span>All entries</span>
-            <b>{records.length}</b>
-          </button>
-          {visibleCollections.map((item) => (
-            <button
-              className={collection === item.id ? "active" : ""}
-              onClick={() => selectCollection(item.id)}
-              key={item.id}
-            >
-              <span className="collection-icon" aria-hidden="true">
-                {item.icon || "•"}
-              </span>
-              <span>{item.name}</span>
-              <b>
-                {
-                  records.filter((record) => record.collection_id === item.id)
-                    .length
-                }
-              </b>
-            </button>
-          ))}
-        </aside>
-
-        <section className="directory-content">
-          <div className="directory-content-head">
-            <div>
-              <small>{organization.mode} directory</small>
-              <h1>{sectionName}</h1>
-            </div>
-            <label className="directory-filter">
-              <span className="sr-only">Filter this collection</span>
-              <input
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                onKeyDown={(event) => event.key === "Enter" && recordSearch()}
-                placeholder="Filter this collection"
-              />
-              {query && (
-                <button onClick={() => setQuery("")} aria-label="Clear filter">
-                  ×
-                </button>
-              )}
-            </label>
+          <label className="material-text-search">
+            <span>Text search</span>
+            <div><input value={query} onChange={(event) => { setQuery(event.target.value); setImageSearchLabel(""); setSearchKind("text"); }} onKeyDown={(event) => event.key === "Enter" && logSearch("text")} placeholder="Name, SKU, material, location…" /><button onClick={() => logSearch("text")}>Search</button></div>
+          </label>
+          <div className="image-search-control">
+            <div><b>Search with a photo</b><small>Take or upload a photo and Material Pin will search visible details and text.</small></div>
+            <button disabled={imageSearching || !organization.ai_enabled} onClick={() => photoSearchInput.current?.click()}>{imageSearching ? "Reading photo…" : "Use a photo"}</button>
+            <input ref={photoSearchInput} type="file" accept="image/*" capture="environment" hidden onChange={(event) => event.target.files?.[0] && runImageSearch(event.target.files[0])} />
+            {!organization.ai_enabled && <small className="ai-off-note">Photo search is not enabled for this site.</small>}
+            {imageSearchLabel && <span className="image-search-result">Photo recognized as: <b>{imageSearchLabel}</b></span>}
           </div>
 
-          {message && <p className="notice">{message}</p>}
-          <div className="directory-map-wrap">
-            <MapView
-              latitude={organization.center_lat}
-              longitude={organization.center_lng}
-              zoom={organization.map_zoom}
-              records={visibleRecords}
-              selectedId={selectedId}
-              onSelect={openRecord}
-              boundary={organization.boundary}
-            />
-            <span className="map-count">
-              {visibleRecords.length}{" "}
-              {visibleRecords.length === 1 ? "pin" : "pins"}
-            </span>
+          <div className="catalog-filters">
+            <div className="filter-title"><b>Narrow results</b><button onClick={clearSearch}>Clear all</button></div>
+            <label>Item group<select value={collection} onChange={(event) => { setCollection(event.target.value); void logSearch("filter"); }}><option value="all">All item groups</option>{visibleCollections.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+            <label>Category<select value={category} onChange={(event) => { setCategory(event.target.value); void logSearch("filter"); }}><option value="all">All categories</option>{categories.map((item) => <option key={item}>{item}</option>)}</select></label>
+            <label>Availability<select value={availability} onChange={(event) => { setAvailability(event.target.value as AvailabilityFilter); void logSearch("filter"); }}><option value="all">Any availability</option><option value="available">Available</option><option value="empty">Out of stock</option><option value="untracked">Not quantity tracked</option></select></label>
+            <label>Named location<select value={locationFilter} onChange={(event) => { setLocationFilter(event.target.value); void logSearch("filter"); }}><option value="all">All locations</option>{locations.map((item) => <option key={item}>{item}</option>)}</select></label>
           </div>
 
-          <div className="card-section-head">
-            <h2>{sectionName}</h2>
-            <span>{visibleRecords.length}</span>
-          </div>
-          <div className="record-grid">
+          <div className="material-results-heading"><h2>{visibleRecords.length} results</h2>{isMember && <button onClick={() => navigate(`submit/${organization.slug}`)}>+ Add item</button>}</div>
+          <div className="material-result-list">
             {visibleRecords.map((item) => (
-              <button
-                className="record-card"
-                key={item.id}
-                onClick={() => openRecord(item.id)}
-              >
-                {item.photo_path ? (
-                  <img src={publicPhoto(item.photo_path)} alt="" />
-                ) : (
-                  <span className="record-photo-empty" aria-hidden="true">
-                    No photo
-                  </span>
-                )}
-                <div className="record-card-copy">
-                  <small>
-                    {item.category ||
-                      visibleCollections.find(
-                        (visible) => visible.id === item.collection_id,
-                      )?.name ||
-                      "Entry"}
-                  </small>
-                  <strong>{item.name}</strong>
-                  <p>{item.description}</p>
-                  {item.quantity !== null && (
-                    <output>
-                      {item.quantity} <small>{item.unit}</small>
-                    </output>
-                  )}
-                </div>
-                <span className="record-card-arrow" aria-hidden="true">
-                  →
-                </span>
+              <button className={selectedId === item.id ? "material-result-card selected" : "material-result-card"} key={item.id} onClick={() => openRecord(item.id)}>
+                {item.photo_path ? <img src={publicPhoto(item.photo_path)} alt="" /> : <span className="generic-pin" aria-hidden="true">●</span>}
+                <span className="result-copy"><small>{item.category}</small><strong>{item.name}</strong><span>{String(item.data.sku || "No SKU")}{itemLocation(item) ? ` · ${itemLocation(item)}` : ""}</span></span>
+                {item.quantity !== null && <output>{item.quantity} <small>{item.unit}</small></output>}
               </button>
             ))}
+            {!visibleRecords.length && <div className="empty material-empty"><h2>No exact matches</h2><p>Try fewer words, remove a filter, or search with another photo.</p></div>}
           </div>
-          {!visibleRecords.length && (
-            <div className="empty directory-empty">
-              <h2>No entries here yet</h2>
-              <p>Choose another collection or add the first entry.</p>
-            </div>
-          )}
+        </section>
+
+        <section className="material-map-panel">
+          <MapView latitude={organization.center_lat} longitude={organization.center_lng} zoom={organization.map_zoom} records={visibleRecords} selectedId={selectedId} onSelect={openRecord} boundary={organization.boundary} />
+          <span className="map-count">{visibleRecords.length} {visibleRecords.length === 1 ? "pin" : "pins"}</span>
         </section>
       </main>
 
-      {(organization.mode === "civic" || isMember) && (
-        <button
-          className="floating-add"
-          onClick={() => navigate(`submit/${organization.slug}`)}
-          aria-label="Add a photo"
-          title="Add a photo"
-        >
-          <span aria-hidden="true">+</span>
-          <strong>Add a photo</strong>
-        </button>
-      )}
-
       {detailOpen && selected && (
-        <div
-          className="detail-overlay"
-          role="presentation"
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget) setDetailOpen(false);
-          }}
-        >
-          <article
-            className="record-detail-sheet"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="record-title"
-          >
-            <button
-              className="detail-close"
-              onClick={() => setDetailOpen(false)}
-              aria-label="Close details"
-            >
-              ×
-            </button>
-            {selected.photo_path ? (
-              <img
-                className="detail-photo"
-                src={publicPhoto(selected.photo_path)}
-                alt=""
-              />
-            ) : (
-              <div className="detail-photo detail-photo-empty">No photo</div>
-            )}
+        <div className="detail-overlay" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && setDetailOpen(false)}>
+          <article className="record-detail-sheet" role="dialog" aria-modal="true" aria-labelledby="record-title">
+            <button className="detail-close" onClick={() => setDetailOpen(false)} aria-label="Close details">×</button>
+            {selected.photo_path ? <img className="detail-photo" src={publicPhoto(selected.photo_path)} alt="" /> : <div className="detail-photo detail-photo-empty">Mapped inventory pin</div>}
             <div className="detail-body">
-              <small className="detail-eyebrow">
-                {selectedCollection?.name || selected.category || "Entry"} ·
-                updated {new Date(selected.updated_at).toLocaleDateString()}
-              </small>
+              <small className="detail-eyebrow">{selectedCollection?.name || selected.category} · updated {new Date(selected.updated_at).toLocaleDateString()}</small>
               <h2 id="record-title">{selected.name}</h2>
               <p>{selected.description || "No description has been added."}</p>
-              {selected.quantity !== null && (
-                <div className="quantity-panel">
-                  <span>Available</span>
-                  <strong>
-                    {selected.quantity} {selected.unit}
-                  </strong>
-                </div>
-              )}
-              {!!selected.keywords.length && (
-                <div className="keyword-line detail-keywords">
-                  {selected.keywords.map((keyword) => (
-                    <i key={keyword}>{keyword}</i>
-                  ))}
-                </div>
-              )}
-              <dl className="record-data">
-                {organization.mode === "commercial" &&
-                  isMember &&
-                  commercialCaptureFields
-                    .filter(
-                      (field) =>
-                        selected.data[field.key] !== undefined &&
-                        selected.data[field.key] !== "",
-                    )
-                    .map((field) => (
-                      <div key={field.key}>
-                        <dt>{field.label}</dt>
-                        <dd>{String(selected.data[field.key])}</dd>
-                      </div>
-                    ))}
-                {selectedCollection?.fields
-                  .filter(
-                    (field) =>
-                      !commercialCaptureFields.some(
-                        (captureField) => captureField.key === field.key,
-                      ) &&
-                      (field.publicVisible || isMember) &&
-                      selected.data[field.key] !== undefined &&
-                      selected.data[field.key] !== "",
-                  )
-                  .map((field) => (
-                    <div key={field.key}>
-                      <dt>{field.label}</dt>
-                      <dd>{String(selected.data[field.key])}</dd>
-                    </div>
-                  ))}
-                <div>
-                  <dt>Location</dt>
-                  <dd>
-                    {selected.latitude.toFixed(5)},{" "}
-                    {selected.longitude.toFixed(5)}
-                  </dd>
-                </div>
+              <dl className="record-data standard-item-data">
+                {selected.data.sku != null && <div><dt>SKU / asset ID</dt><dd>{String(selected.data.sku)}</dd></div>}
+                {itemLocation(selected) && <div><dt>Named location</dt><dd>{itemLocation(selected)}</dd></div>}
+                <div><dt>GPS</dt><dd>{selected.latitude.toFixed(5)}, {selected.longitude.toFixed(5)}</dd></div>
+                {selected.quantity !== null && <div><dt>Quantity</dt><dd>{selected.quantity} {selected.unit}</dd></div>}
+                {isMember && <div><dt>Visibility</dt><dd>{selected.public_visible ? "Public" : "Employees only"}</dd></div>}
               </dl>
-              <div className="detail-actions">
-                <button
-                  onClick={() =>
-                    navigate(`submit/${organization.slug}/${selected.id}`)
-                  }
-                >
-                  Update this entry
-                </button>
-                {organization.mode === "commercial" &&
-                  isMember &&
-                  selectedCollection?.kind === "consumable" && (
-                    <button
-                      className="primary"
-                      onClick={() => setInventoryOpen((value) => !value)}
-                    >
-                      Record quantity used
-                    </button>
-                  )}
-              </div>
-              {inventoryOpen && (
-                <form className="inventory-use" onSubmit={recordUse}>
-                  <h3>Record inventory used</h3>
-                  <label>
-                    Amount
-                    <input
-                      name="amount"
-                      type="number"
-                      min="0.01"
-                      step="any"
-                      required
-                    />
-                  </label>
-                  <label>
-                    Note
-                    <input name="note" placeholder="Optional context" />
-                  </label>
-                  <button>Confirm and alert admin</button>
-                </form>
-              )}
+              {!!selected.keywords.length && <div className="keyword-line detail-keywords">{selected.keywords.map((keyword) => <i key={keyword}>{keyword}</i>)}</div>}
+              {isMember && <div className="detail-actions"><button className="primary" onClick={() => navigate(`submit/${organization.slug}/${selected.id}`)}>Update item</button>{selected.quantity !== null && <button onClick={() => setInventoryOpen((value) => !value)}>Record inventory use</button>}</div>}
+              {inventoryOpen && <form className="inventory-use" onSubmit={recordUse}><label>Quantity used<input name="amount" type="number" min="0.01" step="any" required /></label><label>Note<input name="note" placeholder="Job, order or reason" /></label><button>Update quantity</button></form>}
             </div>
           </article>
         </div>
       )}
+      {message && <div className="directory-toast" role="status">{message}<button onClick={() => setMessage("")}>×</button></div>}
     </div>
   );
 }

@@ -83,7 +83,10 @@ test("image enrichment is server-side, optional and cost limited", async () => {
   assert.match(edge, /image_data_url/);
   assert.match(edge, /collection_id/);
   assert.match(edge, /ai_catalog_context/);
-  assert.match(edge, /terminology data only/);
+  assert.match(edge, /relevance filter only/);
+  assert.match(edge, /must never rename, replace, or force/);
+  assert.match(edge, /visible laptop remains a laptop/);
+  assert.match(edge, /catalog_match/);
   assert.match(edge, /gpt-4o-mini/);
   assert.match(client, /organization\.ai_enabled/);
   assert.match(
@@ -121,6 +124,7 @@ test("boundary drawing uses the current map tool and shows every point", async (
 test("public browsing combines image, text and filter search with the map", async () => {
   const home = await read("src/App.tsx");
   const directory = await read("src/pages/DirectoryPage.tsx");
+  const styles = await read("src/styles.css");
   assert.doesNotMatch(home, /Search organizations/);
   assert.match(home, /organization-grid/);
   assert.match(directory, /material-search-panel/);
@@ -130,6 +134,11 @@ test("public browsing combines image, text and filter search with the map", asyn
   assert.match(directory, /onSelect=\{openRecord\}/);
   assert.match(directory, /record-detail-sheet/);
   assert.match(directory, /Employee sign in/);
+  assert.match(directory, /Employee workspace/);
+  assert.match(directory, /Admin console/);
+  assert.match(directory, /pins"\} shown|pins.*shown/s);
+  assert.match(styles, /\.material-map-panel \.map-count[\s\S]*bottom:\s*auto/);
+  assert.match(styles, /\.directory-employee\.active/);
 });
 
 test("manager console uses plain-language tasks and hides advanced setup", async () => {

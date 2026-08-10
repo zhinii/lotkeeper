@@ -13,6 +13,7 @@ import {
   emptyCommercialCaptureData,
   inventoryCaptureFields,
   inventoryFieldRequired,
+  normalizeCollections,
   type CommercialCaptureKey,
 } from "../lib/captureFields";
 import { navigate } from "../lib/route";
@@ -199,7 +200,11 @@ export default function SubmitPage({
         .eq("slug", slug)
         .single();
       if (error) return setStatus(error.message);
-      const organizationData = org as Organization;
+      const rawOrganization = org as Organization;
+      const organizationData = {
+        ...rawOrganization,
+        collections: normalizeCollections(rawOrganization.collections || []),
+      };
       setOrganization(organizationData);
       const { data: user } = await client.auth.getUser();
       if (!user.user) {

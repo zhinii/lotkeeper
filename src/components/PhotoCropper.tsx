@@ -1,4 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import type {
+  PointerEvent as ReactPointerEvent,
+  WheelEvent as ReactWheelEvent,
+} from "react";
 
 export type CropSelection = {
   zoom: number;
@@ -9,6 +13,8 @@ export type CropSelection = {
 export const defaultCrop: CropSelection = { zoom: 1, x: 0, y: 0 };
 
 const cropAspect = 4 / 3;
+const clamp = (value: number, minimum: number, maximum: number) =>
+  Math.min(maximum, Math.max(minimum, value));
 
 async function loadDrawableImage(file: File) {
   if (typeof createImageBitmap === "function") {
@@ -120,6 +126,125 @@ export default function PhotoCropper({
   const [loaded, setLoaded] = useState(false);
   const [loadError, setLoadError] = useState(false);
   const imageUrl = useMemo(() => URL.createObjectURL(file), [file]);
+  const cropRef = useRef(crop);
+  const pointers = useRef(new Map<number, { x: number; y: number }>());
+  const gesture = useRef<
+    | {
+        mode: "drag";
+        x: number;
+        y: number;
+        crop: CropSelection;
+      }
+    | {
+        mode: "pinch";
+        distance: number;
+        centerX: number;
+        centerY: number;
+        crop: CropSelection;
+      }
+    | null
+  >(null);
+  cropRef.current = crop;
+
+  function updateCrop(next: CropSelection) {
+    cropRef.current = next;
+    onChange(next);
+  }
+
+  function beginGesture() {
+    const points = [...pointers.current.values()];
+    if (points.length === 1) {
+      gesture.current = {
+        mode: "drag",
+        x: points[0].x,
+        y: points[0].y,
+        crop: cropRef.current,
+      };
+      return;
+    }
+    if (points.length >= 2) {
+      const [first, second] = points;
+      gesture.current = {
+        mode: "pinch",
+        distance: Math.hypot(second.x - first.x, second.y - first.y),
+        centerX: (first.x + second.x) / 2,
+        centerY: (first.y + second.y) / 2,
+        crop: cropRef.current,
+      };
+    }
+  }
+
+  function handlePointerDown(event: ReactPointerEvent<HTMLDivElement>) {
+    event.currentTarget.setPointerCapture(event.pointerId);
+    pointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    beginGesture();
+  }
+
+  function handlePointerMove(event: ReactPointerEvent<HTMLDivElement>) {
+    if (!pointers.current.has(event.pointerId) || !gesture.current) return;
+    pointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const points = [...pointers.current.values()];
+    if (points.length === 1 && gesture.current.mode === "drag") {
+      updateCrop({
+        ...gesture.current.crop,
+        x: clamp(
+          gesture.current.crop.x -
+            ((points[0].x - gesture.current.x) / bounds.width) * 200,
+          -100,
+          100,
+        ),
+        y: clamp(
+          gesture.current.crop.y -
+            ((points[0].y - gesture.current.y) / bounds.height) * 200,
+          -100,
+          100,
+        ),
+      });
+      return;
+    }
+    if (points.length >= 2 && gesture.current.mode === "pinch") {
+      const [first, second] = points;
+      const distance = Math.max(
+        1,
+        Math.hypot(second.x - first.x, second.y - first.y),
+      );
+      const centerX = (first.x + second.x) / 2;
+      const centerY = (first.y + second.y) / 2;
+      updateCrop({
+        zoom: clamp(
+          gesture.current.crop.zoom * (distance / gesture.current.distance),
+          1,
+          3,
+        ),
+        x: clamp(
+          gesture.current.crop.x -
+            ((centerX - gesture.current.centerX) / bounds.width) * 200,
+          -100,
+          100,
+        ),
+        y: clamp(
+          gesture.current.crop.y -
+            ((centerY - gesture.current.centerY) / bounds.height) * 200,
+          -100,
+          100,
+        ),
+      });
+    }
+  }
+
+  function handlePointerEnd(event: ReactPointerEvent<HTMLDivElement>) {
+    pointers.current.delete(event.pointerId);
+    beginGesture();
+  }
+
+  function handleWheel(event: ReactWheelEvent<HTMLDivElement>) {
+    event.preventDefault();
+    updateCrop({
+      ...cropRef.current,
+      zoom: clamp(cropRef.current.zoom - event.deltaY * 0.002, 1, 3),
+    });
+  }
 
   useEffect(() => () => URL.revokeObjectURL(imageUrl), [imageUrl]);
   useEffect(() => {
@@ -137,8 +262,8 @@ export default function PhotoCropper({
       element.naturalHeight,
       crop,
     );
-    target.width = 960;
-    target.height = 720;
+    if (target.width !== 960) target.width = 960;
+    if (target.height !== 720) target.height = 720;
     const context = target.getContext("2d");
     if (!context) return;
     context.drawImage(
@@ -156,7 +281,14 @@ export default function PhotoCropper({
 
   return (
     <div className="photo-cropper">
-      <div className="crop-canvas-wrap">
+      <div
+        className="crop-canvas-wrap"
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerEnd}
+        onPointerCancel={handlePointerEnd}
+        onWheel={handleWheel}
+      >
         <img
           ref={image}
           src={imageUrl}
@@ -181,43 +313,32 @@ export default function PhotoCropper({
         )}
       </div>
       <div className="crop-controls">
-        <label>
-          <span>Zoom</span>
-          <input
-            type="range"
-            min="1"
-            max="3"
-            step="0.05"
-            value={crop.zoom}
-            onChange={(event) =>
-              onChange({ ...crop, zoom: Number(event.target.value) })
+        <div className="crop-gesture-help">
+          <strong>Move the photo directly</strong>
+          <span>Drag with one finger</span>
+          <span>Pinch with two fingers to zoom</span>
+        </div>
+        <div className="crop-zoom-buttons" aria-label="Photo zoom">
+          <button
+            type="button"
+            aria-label="Zoom out"
+            onClick={() =>
+              updateCrop({ ...crop, zoom: clamp(crop.zoom - 0.2, 1, 3) })
             }
-          />
-        </label>
-        <label>
-          <span>Move left or right</span>
-          <input
-            type="range"
-            min="-100"
-            max="100"
-            value={crop.x}
-            onChange={(event) =>
-              onChange({ ...crop, x: Number(event.target.value) })
+          >
+            −
+          </button>
+          <output>{Math.round(crop.zoom * 100)}%</output>
+          <button
+            type="button"
+            aria-label="Zoom in"
+            onClick={() =>
+              updateCrop({ ...crop, zoom: clamp(crop.zoom + 0.2, 1, 3) })
             }
-          />
-        </label>
-        <label>
-          <span>Move up or down</span>
-          <input
-            type="range"
-            min="-100"
-            max="100"
-            value={crop.y}
-            onChange={(event) =>
-              onChange({ ...crop, y: Number(event.target.value) })
-            }
-          />
-        </label>
+          >
+            +
+          </button>
+        </div>
       </div>
     </div>
   );

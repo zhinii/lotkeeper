@@ -224,10 +224,13 @@ test("submitters review AI and EXIF values before a locked confirmation", async 
   assert.match(submit, /Use this crop/);
   assert.match(cropper, /canvas\.toBlob/);
   assert.match(cropper, /Cropped photo preview/);
-  assert.match(cropper, /Move left or right/);
+  assert.match(cropper, /onPointerMove/);
+  assert.match(cropper, /Pinch with two fingers to zoom/);
+  assert.match(cropper, /touchZoom|distance \/ gesture\.current\.distance/);
   assert.match(cropper, /createImageBitmap cannot decode/);
   assert.match(cropper, /This photo cannot be opened/);
   assert.match(submit, /disabled=\{preparing \|\| !cropReady\}/);
+  assert.match(submit, /normalizeCollections/);
   const cropStart = submit.indexOf("async function confirmCrop");
   const cropCall = submit.indexOf("await cropPhoto", cropStart);
   const aiCall = submit.indexOf("await analyzeSelectedPhoto", cropCall);
@@ -245,19 +248,23 @@ test("submitters review AI and EXIF values before a locked confirmation", async 
 });
 
 test("Material Pin is installable while retaining the GitHub Pages website", async () => {
-  const [html, main, manifest, worker] = await Promise.all([
+  const [html, main, boundary, manifest, worker] = await Promise.all([
     read("index.html"),
     read("src/main.tsx"),
+    read("src/components/AppErrorBoundary.tsx"),
     read("public/manifest.webmanifest"),
     read("public/sw.js"),
   ]);
   assert.match(html, /manifest\.webmanifest/);
   assert.match(html, /apple-mobile-web-app-capable/);
   assert.match(main, /serviceWorker\.register/);
+  assert.match(main, /AppErrorBoundary/);
+  assert.match(boundary, /This screen could not open/);
+  assert.match(boundary, /Your photo was not submitted/);
   assert.match(manifest, /"display": "standalone"/);
   assert.match(manifest, /"name": "Material Pin"/);
   assert.match(manifest, /icon-192\.png/);
   assert.match(manifest, /icon-512\.png/);
-  assert.match(worker, /material-pin-shell-v3/);
+  assert.match(worker, /material-pin-shell-v4/);
   assert.match(worker, /request\.mode === "navigate"/);
 });

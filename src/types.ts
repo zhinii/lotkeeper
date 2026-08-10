@@ -1,4 +1,6 @@
-export type OrganizationMode = "civic" | "commercial";
+// Legacy values remain readable while existing deployments migrate to the
+// single Material Pin model.
+export type OrganizationMode = "material" | "civic" | "commercial";
 export type LocationSource = "photo_exif" | "browser_gps" | "manual_pin";
 export type FieldType = "text" | "number" | "date" | "boolean";
 
@@ -34,6 +36,7 @@ export type Organization = {
   boundary: [number, number][];
   collections: CollectionDefinition[];
   ai_enabled: boolean;
+  ai_catalog_context: string;
   created_at: string;
 };
 
@@ -104,5 +107,17 @@ export type AlertItem = {
   detail: string;
   record_id: string | null;
   status: "open" | "resolved";
+  created_at: string;
+};
+
+export type SearchEvent = {
+  id: string;
+  organization_id: string;
+  user_id: string | null;
+  query: string;
+  search_type: "text" | "image" | "filter";
+  filters: Record<string, unknown>;
+  result_count: number;
+  opened_record_id: string | null;
   created_at: string;
 };

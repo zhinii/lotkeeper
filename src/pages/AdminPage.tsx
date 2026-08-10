@@ -5,7 +5,7 @@ import OrganizationMapEditor, {
   type MapConfiguration,
 } from "../components/OrganizationMapEditor";
 import { captureFieldLabel } from "../lib/captureFields";
-import { civicDefaults, commercialDefaults } from "../lib/collections";
+import { materialDefaults } from "../lib/collections";
 import { navigate } from "../lib/route";
 import { requireSupabase } from "../lib/supabase";
 import type {
@@ -13,15 +13,17 @@ import type {
   CollectionDefinition,
   Organization,
   RecordItem,
+  SearchEvent,
   Submission,
 } from "../types";
 
-type Tab = "overview" | "review" | "records" | "configure" | "create";
+type Tab = "overview" | "review" | "records" | "activity" | "configure" | "create";
 
 const adminTabs: { id: Tab; label: string; icon: string }[] = [
   { id: "overview", label: "Home", icon: "⌂" },
   { id: "review", label: "Review", icon: "✓" },
   { id: "records", label: "Items", icon: "▦" },
+  { id: "activity", label: "Searches", icon: "⌕" },
   { id: "configure", label: "Settings", icon: "⚙" },
 ];
 
@@ -39,6 +41,39 @@ function aiStatusLabel(status: Submission["ai_status"]) {
   return "Photo analysis not used";
 }
 
+function parseCsv(text: string) {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let value = "";
+  let quoted = false;
+  for (let index = 0; index < text.length; index += 1) {
+    const character = text[index];
+    if (character === '"' && quoted && text[index + 1] === '"') {
+      value += '"';
+      index += 1;
+    } else if (character === '"') quoted = !quoted;
+    else if (character === "," && !quoted) {
+      row.push(value.trim());
+      value = "";
+    } else if ((character === "\n" || character === "\r") && !quoted) {
+      if (character === "\r" && text[index + 1] === "\n") index += 1;
+      row.push(value.trim());
+      if (row.some(Boolean)) rows.push(row);
+      row = [];
+      value = "";
+    } else value += character;
+  }
+  row.push(value.trim());
+  if (row.some(Boolean)) rows.push(row);
+  if (rows.length < 2) return [];
+  const headers = rows[0].map((header) =>
+    header.toLowerCase().trim().replace(/[^a-z0-9]+/g, "_"),
+  );
+  return rows.slice(1).map((cells) =>
+    Object.fromEntries(headers.map((header, index) => [header, cells[index] || ""])),
+  );
+}
+
 export default function AdminPage() {
   const [session, setSession] = useState<any>(null);
   const [isPlatformAdmin, setIsPlatformAdmin] = useState(false);
@@ -47,6 +82,7 @@ export default function AdminPage() {
   const [submissions, setSubmissions] = useState<Submission[]>([]);
   const [records, setRecords] = useState<RecordItem[]>([]);
   const [alerts, setAlerts] = useState<AlertItem[]>([]);
+  const [searches, setSearches] = useState<SearchEvent[]>([]);
   const [submissionPhotos, setSubmissionPhotos] = useState<
     Record<string, string>
   >({});
@@ -66,16 +102,20 @@ export default function AdminPage() {
   });
   const [editPublic, setEditPublic] = useState(false);
   const [editAi, setEditAi] = useState(false);
-  const [createMode, setCreateMode] = useState<"civic" | "commercial">("civic");
+  const [editAiContext, setEditAiContext] = useState("");
   const [createPublic, setCreatePublic] = useState(true);
   const [createCollections, setCreateCollections] = useState<
     CollectionDefinition[]
-  >(() => cloneCollections(civicDefaults));
+  >(() => cloneCollections(materialDefaults));
   const [createMap, setCreateMap] = useState<MapConfiguration>({
     latitude: 36.9148,
     longitude: -111.4573,
     zoom: 14,
     boundary: [],
+  });
+  const [importPoint, setImportPoint] = useState({
+    latitude: 36.9148,
+    longitude: -111.4573,
   });
 
   useEffect(() => {
@@ -98,6 +138,11 @@ export default function AdminPage() {
       });
       setEditPublic(selected.public_access);
       setEditAi(selected.ai_enabled);
+      setEditAiContext(selected.ai_catalog_context || "");
+      setImportPoint({
+        latitude: selected.center_lat,
+        longitude: selected.center_lng,
+      });
       loadWorkspace(selected.id);
     }
   }, [selected?.id]);
@@ -143,7 +188,7 @@ export default function AdminPage() {
   }
   async function loadWorkspace(organizationId: string) {
     const client = requireSupabase();
-    const [submissionRows, recordRows, privateRows, alertRows] =
+    const [submissionRows, recordRows, privateRows, alertRows, searchRows] =
       await Promise.all([
         client
           .from("submissions")
@@ -164,6 +209,12 @@ export default function AdminPage() {
           .select("*")
           .eq("organization_id", organizationId)
           .order("created_at", { ascending: false }),
+        client
+          .from("search_events")
+          .select("*")
+          .eq("organization_id", organizationId)
+          .order("created_at", { ascending: false })
+          .limit(250),
       ]);
     setSubmissions((submissionRows.data || []) as Submission[]);
     const privateByRecord = new Map(
@@ -179,6 +230,7 @@ export default function AdminPage() {
       })),
     );
     setAlerts((alertRows.data || []) as AlertItem[]);
+    setSearches((searchRows.data || []) as SearchEvent[]);
     const photoEntries = await Promise.all(
       ((submissionRows.data || []) as Submission[])
         .filter((item) => item.photo_path)
@@ -195,12 +247,11 @@ export default function AdminPage() {
   async function createOrganization(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
-    const mode = createMode;
     const client = requireSupabase();
     const { data: newId, error } = await client.rpc("create_organization", {
       org_name: String(form.get("name")),
       org_slug: String(form.get("slug")),
-      org_mode: mode,
+      org_mode: "material",
       is_public: createPublic,
       latitude: createMap.latitude,
       longitude: createMap.longitude,
@@ -208,12 +259,16 @@ export default function AdminPage() {
       collection_config: createCollections,
     });
     if (error) return setMessage(error.message);
-    if (newId && createMap.boundary.length) {
-      const { error: boundaryError } = await client
+    if (newId) {
+      const { error: setupError } = await client
         .from("organizations")
-        .update({ boundary: createMap.boundary })
+        .update({
+          boundary: createMap.boundary,
+          ai_enabled: form.get("ai_enabled") === "on",
+          ai_catalog_context: String(form.get("ai_catalog_context") || "").trim(),
+        })
         .eq("id", newId);
-      if (boundaryError) return setMessage(boundaryError.message);
+      if (setupError) return setMessage(setupError.message);
     }
     setMessage("Organization created.");
     setTab("overview");
@@ -227,6 +282,7 @@ export default function AdminPage() {
         collections: editCollections,
         public_access: editPublic,
         ai_enabled: editAi,
+        ai_catalog_context: editAiContext.trim(),
         center_lat: editMap.latitude,
         center_lng: editMap.longitude,
         map_zoom: editMap.zoom,
@@ -261,11 +317,19 @@ export default function AdminPage() {
         if (uploaded.error) throw uploaded.error;
       }
       if (decision === "approved") {
-        const { error } = await client.rpc("approve_submission", {
+        const { data: approvedRecordId, error } = await client.rpc("approve_submission", {
           submission_id: item.id,
           published_photo_path: publicPath,
         });
         if (error) throw error;
+        const requestedVisibility = item.proposed.public_visible;
+        if (typeof requestedVisibility === "boolean" && approvedRecordId) {
+          const { error: visibilityError } = await client
+            .from("records")
+            .update({ public_visible: requestedVisibility })
+            .eq("id", approvedRecordId);
+          if (visibilityError) throw visibilityError;
+        }
       } else {
         const { error } = await client
           .from("submissions")
@@ -324,6 +388,117 @@ export default function AdminPage() {
     if (error) return setMessage(error.message);
     if (selected) await loadWorkspace(selected.id);
   }
+  async function saveRecord(
+    event: React.FormEvent<HTMLFormElement>,
+    item: RecordItem,
+  ) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const quantityText = String(form.get("quantity") || "").trim();
+    const quantity = quantityText === "" ? null : Number(quantityText);
+    const client = requireSupabase();
+    const { data: user } = await client.auth.getUser();
+    const nextData = {
+      ...item.data,
+      sku: String(form.get("sku") || "").trim(),
+      location_code: String(form.get("location") || "").trim(),
+    };
+    const { error } = await client
+      .from("records")
+      .update({
+        collection_id: String(form.get("collection_id") || item.collection_id),
+        name: String(form.get("name") || "").trim(),
+        description: String(form.get("description") || "").trim(),
+        category: String(form.get("category") || "").trim() || "Uncategorized",
+        quantity,
+        unit: String(form.get("unit") || "").trim() || null,
+        latitude: Number(form.get("latitude")),
+        longitude: Number(form.get("longitude")),
+        public_visible: form.get("public_visible") === "on",
+        data: nextData,
+        version: item.version + 1,
+        updated_at: new Date().toISOString(),
+        updated_by: user.user?.id || null,
+      })
+      .eq("id", item.id);
+    if (error) return setMessage(error.message);
+    if (quantity !== item.quantity && quantity !== null && user.user) {
+      await client.from("inventory_transactions").insert({
+        organization_id: item.organization_id,
+        record_id: item.id,
+        user_id: user.user.id,
+        event_type: "counted",
+        quantity,
+        before_quantity: item.quantity,
+        after_quantity: quantity,
+        note: "Administrator inventory edit",
+      });
+    }
+    setMessage(`Saved ${String(form.get("name") || item.name)}.`);
+    if (selected) await loadWorkspace(selected.id);
+  }
+
+  async function importCsv(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selected) return;
+    const form = new FormData(event.currentTarget);
+    const file = form.get("csv") as File;
+    if (!file?.size) return setMessage("Choose a CSV file first.");
+    const rows = parseCsv(await file.text());
+    if (!rows.length)
+      return setMessage("The CSV needs a header row and at least one item row.");
+    const collectionId = String(form.get("collection_id") || "");
+    const collection = selected.collections.find((item) => item.id === collectionId);
+    if (!collection) return setMessage("Choose an item group for the import.");
+    const defaultLocation = String(form.get("default_location") || "").trim();
+    const defaultPublic = form.get("public_visible") === "on";
+    const { data: user } = await requireSupabase().auth.getUser();
+    const payload = rows
+      .map((row) => {
+        const name = row.name || row.item_name || row.item || row.description;
+        if (!name) return null;
+        const latitude = Number(row.latitude || row.lat || importPoint.latitude);
+        const longitude = Number(row.longitude || row.lng || row.lon || importPoint.longitude);
+        const quantityText = row.quantity || row.qty || row.count;
+        const publicText = (row.public || row.public_visible || "").toLowerCase();
+        return {
+          organization_id: selected.id,
+          collection_id: row.collection_id || collectionId,
+          name,
+          description: row.description || "",
+          keywords: String(row.keywords || row.tags || "")
+            .split(/[|;,]/)
+            .map((item) => item.trim())
+            .filter(Boolean),
+          category: row.category || collection.name,
+          data: {
+            sku: row.sku || row.sku_number || row.asset_id || "",
+            location_code:
+              row.location || row.location_code || row.bin || defaultLocation,
+            manufacturer: row.manufacturer || row.brand || "",
+            condition: row.condition || "",
+            lot_serial: row.lot_serial || row.serial || row.serial_number || "",
+          },
+          quantity: quantityText === "" || quantityText == null ? null : Number(quantityText),
+          unit: row.unit || null,
+          latitude: Number.isFinite(latitude) ? latitude : importPoint.latitude,
+          longitude: Number.isFinite(longitude) ? longitude : importPoint.longitude,
+          location_source: "manual_pin",
+          photo_path: null,
+          public_visible: publicText
+            ? !["false", "no", "0", "private"].includes(publicText)
+            : defaultPublic,
+          updated_by: user.user?.id || null,
+        };
+      })
+      .filter(Boolean) as Array<Record<string, unknown>>;
+    if (!payload.length) return setMessage("No rows contained an item name.");
+    const { error } = await requireSupabase().from("records").insert(payload);
+    if (error) return setMessage(error.message);
+    setMessage(`Imported ${payload.length} items as mapped inventory pins.`);
+    event.currentTarget.reset();
+    await loadWorkspace(selected.id);
+  }
   async function resolveAlert(item: AlertItem) {
     await requireSupabase()
       .from("alerts")
@@ -343,7 +518,7 @@ export default function AdminPage() {
     return (
       <div className="login-page">
         <form onSubmit={login}>
-          <div className="brand">LOTKEEPER</div>
+          <div className="brand">MATERIAL PIN</div>
           <small>MANAGER ACCESS</small>
           <h1>Welcome back</h1>
           <p>Sign in to review submissions and manage your organization.</p>
@@ -383,7 +558,7 @@ export default function AdminPage() {
     <div className="admin-page">
       <header className="admin-header">
         <button className="brand-button" onClick={() => navigate("home")}>
-          <b>LOTKEEPER</b>
+          <b>MATERIAL PIN</b>
           <span>Manager</span>
         </button>
         <nav aria-label="Manager sections">
@@ -427,7 +602,7 @@ export default function AdminPage() {
             )}
             {organizations.map((item) => (
               <option key={item.id} value={item.id}>
-                {item.name} · {item.mode}
+                {item.name}
               </option>
             ))}
           </select>
@@ -453,8 +628,8 @@ export default function AdminPage() {
             <small>GET STARTED</small>
             <h1>Create your first organization</h1>
             <p>
-              An organization is one deployed site. Choose civic or commercial,
-              define its collections and fields, then set its map and boundary.
+              An organization is one deployed site. Define its item groups and
+              fields, then set its map and boundary.
             </p>
             {isPlatformAdmin ? (
               <button onClick={() => setTab("create")}>
@@ -765,31 +940,53 @@ export default function AdminPage() {
         {tab === "records" && (
           <>
             <div className="admin-title">
-              <small>WHAT IS PUBLISHED</small>
-              <h1>Manage items</h1>
-              <p>These entries are visible in your organization directory.</p>
+              <small>INVENTORY AND MAP PINS</small>
+              <h1>Manage every item</h1>
+              <p>Edit details, visibility, quantities and exact map locations.</p>
             </div>
+            {selected && (
+              <details className="csv-import panel">
+                <summary><span><b>Import inventory from CSV</b><small>Create inventory records with generic map pins. Photos can be added later.</small></span><i>Open</i></summary>
+                <form onSubmit={importCsv}>
+                  <div className="csv-import-grid">
+                    <label>CSV file<input name="csv" type="file" accept=".csv,text/csv" required /></label>
+                    <label>Item group<select name="collection_id" required>{selected.collections.map((collection) => <option key={collection.id} value={collection.id}>{collection.name}</option>)}</select></label>
+                    <label>Default named location<input name="default_location" placeholder="Row A, north yard, aisle 12" /></label>
+                    <label className="csv-public-choice"><input name="public_visible" type="checkbox" defaultChecked /><span>Show imported items publicly</span></label>
+                  </div>
+                  <div className="csv-map-picker">
+                    <div><b>Pick the default pin location</b><small>Rows with latitude and longitude use their own coordinates. All other rows use this pin.</small></div>
+                    <MapView latitude={importPoint.latitude} longitude={importPoint.longitude} zoom={selected.map_zoom} picker compact onPick={(latitude, longitude) => setImportPoint({ latitude, longitude })} />
+                    <output>{importPoint.latitude.toFixed(6)}, {importPoint.longitude.toFixed(6)}</output>
+                  </div>
+                  <p className="csv-columns">Recognized columns: name, description, SKU, quantity, unit, category, location, latitude, longitude, public, keywords, manufacturer, condition and serial.</p>
+                  <button className="save-button">Import inventory</button>
+                </form>
+              </details>
+            )}
             <div className="record-admin-list">
               {records.map((item) => (
-                <article key={item.id}>
-                  <div>
-                    <small>
-                      {item.category || "Uncategorized"} · last updated{" "}
-                      {new Date(item.updated_at).toLocaleDateString()}
-                    </small>
-                    <b>{item.name}</b>
-                    <p>{item.description}</p>
-                    {item.data.sku != null && item.data.sku !== "" && (
-                      <small>SKU # / asset ID: {String(item.data.sku)}</small>
-                    )}
-                  </div>
-                  <span>
-                    {item.quantity !== null
-                      ? `${item.quantity} ${item.unit || ""}`
-                      : item.status}
-                  </span>
-                  <button onClick={() => archiveRecord(item)}>Archive</button>
-                </article>
+                <details className="record-edit-card" key={item.id}>
+                  <summary>
+                    <span><small>{item.category || "Uncategorized"} · {item.public_visible ? "Public" : "Employees only"}</small><b>{item.name}</b><small>{String(item.data.sku || "No SKU")} · {String(item.data.location_code || item.data.location || "No named location")}</small></span>
+                    <output>{item.quantity !== null ? `${item.quantity} ${item.unit || ""}` : "Not counted"}</output>
+                    <i>Edit</i>
+                  </summary>
+                  <form className="record-edit-form" onSubmit={(event) => saveRecord(event, item)}>
+                    <label>Item name<input name="name" defaultValue={item.name} required /></label>
+                    <label>Item group<select name="collection_id" defaultValue={item.collection_id}>{selected?.collections.map((collection) => <option key={collection.id} value={collection.id}>{collection.name}</option>)}</select></label>
+                    <label>SKU / asset ID<input name="sku" defaultValue={String(item.data.sku || "")} /></label>
+                    <label>Category<input name="category" defaultValue={item.category} /></label>
+                    <label>Quantity<input name="quantity" type="number" step="any" min="0" defaultValue={item.quantity ?? ""} /></label>
+                    <label>Unit<input name="unit" defaultValue={item.unit || ""} placeholder="pieces, feet, cases" /></label>
+                    <label>Named location<input name="location" defaultValue={String(item.data.location_code || item.data.location || "")} placeholder="Row A, bin 12" /></label>
+                    <label>Latitude<input name="latitude" type="number" step="any" defaultValue={item.latitude} required /></label>
+                    <label>Longitude<input name="longitude" type="number" step="any" defaultValue={item.longitude} required /></label>
+                    <label className="wide-field">Description<textarea name="description" rows={4} defaultValue={item.description} /></label>
+                    <label className="visibility-choice wide-field"><input name="public_visible" type="checkbox" defaultChecked={item.public_visible} /><span><b>Show on the public site</b><small>Private items remain visible to assigned employees and administrators.</small></span></label>
+                    <div className="record-edit-actions wide-field"><button className="save-button">Save item</button><button type="button" className="danger" onClick={() => archiveRecord(item)}>Archive item</button></div>
+                  </form>
+                </details>
               ))}
               {!records.length && (
                 <div className="admin-list-empty">
@@ -801,13 +998,37 @@ export default function AdminPage() {
             </div>
           </>
         )}
+        {tab === "activity" && (
+          <>
+            <div className="admin-title">
+              <small>WHAT PEOPLE NEED</small>
+              <h1>Search activity</h1>
+              <p>See the words, photos and filters people use to find items.</p>
+            </div>
+            <div className="search-activity-summary">
+              <article><small>Total searches</small><b>{searches.length}</b></article>
+              <article><small>Photo searches</small><b>{searches.filter((item) => item.search_type === "image").length}</b></article>
+              <article><small>No-result searches</small><b>{searches.filter((item) => item.result_count === 0).length}</b></article>
+            </div>
+            <div className="search-activity-list">
+              {searches.map((item) => (
+                <article key={item.id}>
+                  <span className={`search-kind ${item.search_type}`}>{item.search_type}</span>
+                  <div><b>{item.query}</b><small>{new Date(item.created_at).toLocaleString()} · {item.result_count} results</small></div>
+                  {item.result_count === 0 && <strong>Needs attention</strong>}
+                </article>
+              ))}
+              {!searches.length && <div className="admin-list-empty"><span>⌕</span><h2>No searches yet</h2><p>Public and employee searches will appear here.</p></div>}
+            </div>
+          </>
+        )}
         {tab === "configure" && !selected && (
           <section className="admin-empty-state panel">
             <small>CONFIGURATION</small>
             <h1>No organization to configure</h1>
             <p>
-              Create an organization first. Its civic or commercial type,
-              collections, fields, public access, AI options and map are all set
+              Create an organization first. Its item groups, fields, public
+              access, AI options and map are all set
               in the guided setup.
             </p>
             {isPlatformAdmin ? (
@@ -860,6 +1081,23 @@ export default function AdminPage() {
                       Turn this off when only assigned staff should have access.
                     </small>
                   </span>
+                </label>
+                <label className="catalog-guide-field panel">
+                  <span>
+                    <b>Teach the photo search your organization’s language</b>
+                    <small>
+                      Describe the business, common items, preferred names,
+                      identifier formats and details the AI should not guess.
+                    </small>
+                  </span>
+                  <textarea
+                    value={editAiContext}
+                    onChange={(event) => setEditAiContext(event.target.value)}
+                    rows={7}
+                    maxLength={4000}
+                    placeholder="Example: Steel service center. Use plate, sheet, angle, channel, beam, tube, offcut, alloy, thickness and heat number. Never guess a grade or measurement that is not visible."
+                  />
+                  <small>{editAiContext.length}/4000 characters</small>
                 </label>
                 <label className="access-setting panel">
                   <input
@@ -926,30 +1164,10 @@ export default function AdminPage() {
                     />
                   </label>
                 </div>
-                <label>
-                  What will this organization manage?
-                  <select
-                    name="mode"
-                    value={createMode}
-                    onChange={(event) => {
-                      const mode = event.target.value as "civic" | "commercial";
-                      setCreateMode(mode);
-                      setCreatePublic(mode === "civic");
-                      setCreateCollections(
-                        cloneCollections(
-                          mode === "civic" ? civicDefaults : commercialDefaults,
-                        ),
-                      );
-                    }}
-                  >
-                    <option value="civic">
-                      Civic · public places and contributions
-                    </option>
-                    <option value="commercial">
-                      Commercial · inventory, materials and equipment
-                    </option>
-                  </select>
-                </label>
+                <div className="access-warning">
+                  Material Pin manages inventory, reusable materials, equipment
+                  and mapped site locations. You can rename every item group.
+                </div>
                 <label className="access-setting">
                   <input
                     type="checkbox"
@@ -977,6 +1195,14 @@ export default function AdminPage() {
                   value={createCollections}
                   onChange={setCreateCollections}
                 />
+                <label className="access-setting panel">
+                  <input name="ai_enabled" type="checkbox" defaultChecked />
+                  <span><b>Enable photo descriptions and photo search</b><small>The OpenAI API is called only when someone uses a photo feature.</small></span>
+                </label>
+                <label className="catalog-guide-field panel">
+                  <span><b>AI catalog guide</b><small>Give the AI the real vocabulary used by this organization.</small></span>
+                  <textarea name="ai_catalog_context" rows={7} maxLength={4000} placeholder="Example: Vehicle salvage yard. Identify vehicle type, make/model clues, body panels, engines, wheels, major components and visible condition. Use stock numbers when readable. Do not guess VIN digits." />
+                </label>
               </section>
               <section className="create-step">
                 <div className="step-heading">

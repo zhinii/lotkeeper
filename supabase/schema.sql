@@ -1,11 +1,11 @@
--- Lotkeeper V2 dedicated schema. Run only in the new Lotkeeper Supabase project.
+-- Material Pin dedicated schema. Run only in the Material Pin Supabase project.
 create extension if not exists pgcrypto;
 
 create table public.organizations (
   id uuid primary key default gen_random_uuid(),
   slug text not null unique check (slug ~ '^[a-z0-9]+(?:-[a-z0-9]+)*$'),
   name text not null,
-  mode text not null check (mode in ('civic','commercial')),
+  mode text not null default 'material' check (mode = 'material'),
   public_access boolean not null default false,
   center_lat double precision not null,
   center_lng double precision not null,
@@ -13,6 +13,7 @@ create table public.organizations (
   boundary jsonb not null default '[]'::jsonb,
   collections jsonb not null default '[]'::jsonb,
   ai_enabled boolean not null default false,
+  ai_catalog_context text not null default '',
   created_by uuid not null references auth.users(id),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
@@ -102,7 +103,7 @@ create table public.ai_usage_events (
   id uuid primary key default gen_random_uuid(),
   organization_id uuid not null references public.organizations(id) on delete cascade,
   submission_id uuid references public.submissions(id) on delete set null,
-  purpose text not null check (purpose in ('preview','submission')),
+  purpose text not null check (purpose in ('preview','submission','search')),
   created_at timestamptz not null default now()
 );
 
@@ -122,8 +123,10 @@ create table public.inventory_transactions (
 create table public.search_events (
   id uuid primary key default gen_random_uuid(),
   organization_id uuid not null references public.organizations(id) on delete cascade,
-  user_id uuid not null default auth.uid() references auth.users(id),
+  user_id uuid default auth.uid() references auth.users(id),
   query text not null,
+  search_type text not null default 'text' check (search_type in ('text','image','filter')),
+  filters jsonb not null default '{}'::jsonb,
   result_count integer not null,
   opened_record_id uuid references public.records(id) on delete set null,
   created_at timestamptz not null default now()
@@ -177,7 +180,7 @@ as $$ select exists(select 1 from public.organizations o where o.id=target and (
 
 create or replace function public.collection_accepts_public(target uuid, collection_key text)
 returns boolean language sql stable security definer set search_path=public
-as $$ select exists(select 1 from public.organizations o, jsonb_array_elements(o.collections) c where o.id=target and o.mode='civic' and o.public_access and c->>'id'=collection_key and coalesce((c->>'publicSubmit')::boolean,false)) $$;
+as $$ select false $$;
 
 create or replace function public.collection_is_public(target uuid, collection_key text)
 returns boolean language sql stable security definer set search_path=public
@@ -185,7 +188,7 @@ as $$ select exists(select 1 from public.organizations o, jsonb_array_elements(o
 
 create or replace function public.can_upload_submission_media(target uuid)
 returns boolean language sql stable security definer set search_path=public
-as $$ select exists(select 1 from public.organizations o where o.id=target and ((o.mode='civic' and o.public_access and exists(select 1 from jsonb_array_elements(o.collections) c where coalesce((c->>'publicSubmit')::boolean,false))) or public.is_org_member(o.id))) $$;
+as $$ select public.is_org_member(target) $$;
 
 create or replace function public.public_record_data(target uuid, collection_key text, proposed_data jsonb)
 returns jsonb language sql stable security definer set search_path=public
@@ -281,6 +284,17 @@ as $$ begin
 end $$;
 create trigger search_alert after insert on public.search_events for each row execute function public.log_commercial_search();
 
+create or replace function public.log_material_search(target_organization uuid, search_query text, search_kind text, search_filters jsonb, matching_records integer)
+returns uuid language plpgsql security definer set search_path=public
+as $$ declare new_id uuid; begin
+  if search_kind not in ('text','image','filter') then raise exception 'Unsupported search type'; end if;
+  if not exists(select 1 from public.organizations where id=target_organization and (public_access or public.is_org_member(id))) then raise exception 'Organization is not available'; end if;
+  insert into public.search_events(organization_id,user_id,query,search_type,filters,result_count)
+  values(target_organization,auth.uid(),left(coalesce(nullif(trim(search_query),''),'Browse filters'),500),search_kind,coalesce(search_filters,'{}'::jsonb),greatest(0,matching_records))
+  returning id into new_id;
+  return new_id;
+end $$;
+
 insert into storage.buckets(id,name,public,file_size_limit,allowed_mime_types) values('submission-media','submission-media',false,15728640,array['image/jpeg','image/png','image/webp','image/heic','image/heif']) on conflict(id) do update set public=false,file_size_limit=excluded.file_size_limit,allowed_mime_types=excluded.allowed_mime_types;
 insert into storage.buckets(id,name,public,file_size_limit,allowed_mime_types) values('public-records','public-records',true,15728640,array['image/jpeg','image/png','image/webp']) on conflict(id) do update set public=true,file_size_limit=excluded.file_size_limit,allowed_mime_types=excluded.allowed_mime_types;
 
@@ -304,5 +318,6 @@ grant select,insert,update,delete on all tables in schema public to authenticate
 grant execute on function public.create_organization to authenticated;
 grant execute on function public.approve_submission to authenticated;
 grant execute on function public.record_inventory_use to authenticated;
+grant execute on function public.log_material_search(uuid,text,text,jsonb,integer) to anon,authenticated;
 
-select 'Lotkeeper V2 schema installed' as result;
+select 'Material Pin schema installed' as result;

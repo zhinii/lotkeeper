@@ -122,6 +122,8 @@ export default function SubmitPage({
   const [point, setPoint] = useState<Point | null>(null);
   const [status, setStatus] = useState("");
   const [sending, setSending] = useState(false);
+  const [isMember, setIsMember] = useState(false);
+  const [publicVisible, setPublicVisible] = useState(true);
   const [preparing, setPreparing] = useState(false);
   const [analysisState, setAnalysisState] = useState<AnalysisState>("idle");
   const [aiSuggestions, setAiSuggestions] = useState<
@@ -139,9 +141,21 @@ export default function SubmitPage({
       if (error) return setStatus(error.message);
       const organizationData = org as Organization;
       setOrganization(organizationData);
-      const first = organizationData.collections.find(
-        (item) => organizationData.mode === "commercial" || item.publicSubmit,
-      );
+      const { data: user } = await client.auth.getUser();
+      if (!user.user) {
+        setStatus("Employee sign-in is required to add or update items.");
+        return;
+      }
+      const { data: memberships } = await client
+        .from("organization_members")
+        .select("organization_id")
+        .eq("organization_id", organizationData.id);
+      if (!memberships?.length) {
+        setStatus("Your account is not assigned to this organization.");
+        return;
+      }
+      setIsMember(true);
+      const first = organizationData.collections[0];
       setCollectionId(first?.id || "");
 
       if (!recordId) return;
@@ -171,6 +185,7 @@ export default function SubmitPage({
       setKeywords(item.keywords.join(", "));
       setQuantity(item.quantity === null ? "1" : String(item.quantity));
       setUnit(item.unit || "");
+      setPublicVisible(item.public_visible);
       setPhotoTakenAt(item.photo_taken_at);
       setCustomData(
         Object.fromEntries(
@@ -205,10 +220,7 @@ export default function SubmitPage({
   }, [photo]);
 
   const collections = useMemo(
-    () =>
-      organization?.collections.filter(
-        (item) => organization.mode === "commercial" || item.publicSubmit,
-      ) || [],
+    () => organization?.collections || [],
     [organization],
   );
   const collection =
@@ -369,14 +381,13 @@ export default function SubmitPage({
         collection.fields
           .filter(
             (field) =>
-              (field.publicSubmit || organization.mode === "commercial") &&
               !commercialCaptureKeys.has(field.key),
           )
           .map((field) => [field.key, customData[field.key] || ""]),
       );
       const data = {
         ...configurableData,
-        ...(organization.mode === "commercial" ? commercialData : {}),
+        ...commercialData,
       };
       const confirmedKeywords = keywords
         .split(",")
@@ -400,7 +411,8 @@ export default function SubmitPage({
         data,
         collection_id: collection.id,
         quantity: quantity !== "" ? Number(quantity) : null,
-        unit: organization.mode === "commercial" ? unit.trim() || null : null,
+        unit: unit.trim() || null,
+        public_visible: publicVisible,
         latitude: point.lat,
         longitude: point.lng,
         location_source: point.source,
@@ -446,6 +458,20 @@ export default function SubmitPage({
       </div>
     );
 
+  if (!isMember)
+    return (
+      <main className="access-page">
+        <button className="access-back" onClick={() => navigate(`org/${slug}`)}>← Public site</button>
+        <section className="access-card">
+          <div className="brand">MATERIAL PIN</div>
+          <small>EMPLOYEE ACCESS REQUIRED</small>
+          <h1>Sign in before changing this map</h1>
+          <p>{status || "Only assigned employees can add or update items."}</p>
+          <button onClick={() => navigate("staff")}>Employee sign in</button>
+        </section>
+      </main>
+    );
+
   const mapLat = point?.lat ?? organization.center_lat;
   const mapLng = point?.lng ?? organization.center_lng;
   const displayPhoto = preview || (target?.photo_path ? publicPhoto(target.photo_path) : "");
@@ -455,7 +481,7 @@ export default function SubmitPage({
       <div className="submission-page submission-flow-page">
         <header className="topbar submission-topbar">
           <div className="brand-button">
-            <b>LOTKEEPER</b>
+            <b>MATERIAL PIN</b>
             <span>{organization.name}</span>
           </div>
         </header>
@@ -496,7 +522,7 @@ export default function SubmitPage({
             className="brand-button"
             onClick={() => navigate(`org/${organization.slug}`)}
           >
-            <b>LOTKEEPER</b>
+            <b>MATERIAL PIN</b>
             <span>{organization.name}</span>
           </button>
           <button onClick={() => navigate(`org/${organization.slug}`)}>Cancel</button>
@@ -509,7 +535,7 @@ export default function SubmitPage({
             <small>{recordId ? "UPDATE AN ENTRY" : "ADD TO THE MAP"}</small>
             <h1>{recordId ? "Start with a new photo" : "First, take a photo"}</h1>
             <p>
-              The photo is the starting point. Lotkeeper will read its date and
+              The photo is the starting point. Material Pin will read its date and
               location, then prepare details for you to review.
             </p>
           </section>
@@ -566,11 +592,7 @@ export default function SubmitPage({
               )}
             </section>
           )}
-          <p className="capture-privacy">
-            {organization.mode === "civic"
-              ? "No account or name is required. Nothing becomes public until an administrator approves it."
-              : "Your signed-in account and inventory changes are recorded."}
-          </p>
+          <p className="capture-privacy">Your signed-in employee account and every inventory change are recorded.</p>
         </main>
       </div>
     );
@@ -590,7 +612,7 @@ export default function SubmitPage({
         </div>
         <div className="review-heading">
           <small>REVIEW BEFORE SENDING</small>
-          <h1>Check what Lotkeeper found</h1>
+          <h1>Check what Material Pin found</h1>
           <p>Correct anything that is not right, confirm the pin, then submit.</p>
         </div>
 
@@ -682,7 +704,6 @@ export default function SubmitPage({
               </label>
             </div>
 
-            {organization.mode === "commercial" && (
               <fieldset className="inventory-capture-fields">
                 <legend>Inventory details</legend>
                 {commercialCaptureFields.map((field) => (
@@ -698,15 +719,18 @@ export default function SubmitPage({
                 ))}
                 <label>
                   Unit
-                  <input value={unit} onChange={(event) => setUnit(event.target.value)} placeholder="pieces, feet, cases" required />
+                  <input value={unit} onChange={(event) => setUnit(event.target.value)} placeholder="pieces, feet, cases" />
                 </label>
               </fieldset>
-            )}
+
+            <label className="visibility-choice wide-field">
+              <input type="checkbox" checked={publicVisible} onChange={(event) => setPublicVisible(event.target.checked)} />
+              <span><b>Show this item on the public site</b><small>Turn this off for employee-only inventory, equipment or site information.</small></span>
+            </label>
 
             {collection?.fields
               .filter(
                 (field) =>
-                  (field.publicSubmit || organization.mode === "commercial") &&
                   !commercialCaptureKeys.has(field.key),
               )
               .map((field) => (

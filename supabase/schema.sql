@@ -308,7 +308,9 @@ create policy public_photo_admin_update on storage.objects for update to authent
 grant usage on schema public to anon,authenticated;
 grant usage on schema public to service_role;
 grant select on public.organizations,public.records to anon,authenticated;
-grant select on public.organizations to service_role;
+grant select,delete on public.organizations to service_role;
+grant select on public.platform_admins to service_role;
+grant select,insert,update,delete on public.organization_members to service_role;
 grant select on public.platform_admins to authenticated;
 grant select on public.record_private_data to authenticated;
 grant insert on public.submissions to anon,authenticated;

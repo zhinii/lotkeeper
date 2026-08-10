@@ -2949,3 +2949,77 @@ body:has(.login-page) {
     padding: 20px;
   }
 }
+/* Capture forms keep required civic and commercial information consistent. */
+.inventory-capture-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+  margin: 1.25rem 0;
+  padding: 1.25rem;
+  border: 1px solid var(--line, #d8ded9);
+  border-radius: 18px;
+  background: #f7f8f3;
+}
+
+.inventory-capture-fields legend {
+  padding: 0 0.5rem;
+  font-size: 1.05rem;
+  font-weight: 800;
+}
+
+.inventory-capture-fields > p {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: #59645e;
+}
+
+.inventory-capture-fields .field-pair {
+  grid-column: 1 / -1;
+}
+
+.capture-date-field {
+  margin-top: 1rem;
+}
+
+.capture-date-field small {
+  display: block;
+  margin-top: 0.4rem;
+  color: #647069;
+  font-weight: 500;
+}
+
+.coordinate-readout {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-top: 0.85rem;
+  padding: 0.85rem 1rem;
+  border-radius: 14px;
+  background: #eef3ed;
+}
+
+.coordinate-readout span {
+  font-weight: 800;
+}
+
+.coordinate-readout code {
+  overflow-wrap: anywhere;
+  text-align: right;
+}
+
+@media (max-width: 640px) {
+  .inventory-capture-fields {
+    grid-template-columns: 1fr;
+    padding: 1rem;
+  }
+
+  .coordinate-readout {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .coordinate-readout code {
+    text-align: left;
+  }
+}

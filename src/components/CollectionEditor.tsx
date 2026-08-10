@@ -9,9 +9,7 @@ const fieldPresets: Omit<
   FieldDefinition,
   "required" | "publicVisible" | "publicSubmit" | "searchable"
 >[] = [
-  { key: "sku", label: "SKU", type: "text" },
   { key: "identifier", label: "Identifier", type: "text" },
-  { key: "condition", label: "Condition", type: "text" },
   { key: "dimensions", label: "Dimensions", type: "text" },
   { key: "material", label: "Material", type: "text" },
   { key: "department", label: "Department", type: "text" },
@@ -153,7 +151,10 @@ export default function CollectionEditor({
             </div>
             <h4>What information should each entry include?</h4>
             <p className="field-help">
-              Select common information, or add a field with your own name.
+              Item name, description, quantity, photo date and GPS are included
+              automatically. Commercial captures also include SKU, unit,
+              location, condition, brand and lot or serial number. Add only the
+              extra information this list needs.
             </p>
             <div className="preset-fields">
               {fieldPresets.map((preset) => (

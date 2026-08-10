@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import MapView from "../components/MapView";
+import { commercialCaptureFields } from "../lib/captureFields";
 import { navigate } from "../lib/route";
 import { publicPhoto, requireSupabase } from "../lib/supabase";
 import type { Organization, RecordItem } from "../types";
@@ -373,9 +374,26 @@ export default function DirectoryPage({ slug }: { slug: string }) {
                 </div>
               )}
               <dl className="record-data">
+                {organization.mode === "commercial" &&
+                  isMember &&
+                  commercialCaptureFields
+                    .filter(
+                      (field) =>
+                        selected.data[field.key] !== undefined &&
+                        selected.data[field.key] !== "",
+                    )
+                    .map((field) => (
+                      <div key={field.key}>
+                        <dt>{field.label}</dt>
+                        <dd>{String(selected.data[field.key])}</dd>
+                      </div>
+                    ))}
                 {selectedCollection?.fields
                   .filter(
                     (field) =>
+                      !commercialCaptureFields.some(
+                        (captureField) => captureField.key === field.key,
+                      ) &&
                       (field.publicVisible || isMember) &&
                       selected.data[field.key] !== undefined &&
                       selected.data[field.key] !== "",

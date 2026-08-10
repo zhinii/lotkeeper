@@ -30,7 +30,6 @@ function SetupPage() {
 
 function HomePage() {
   const [organizations, setOrganizations] = useState<Organization[]>([]);
-  const [query, setQuery] = useState("");
   useEffect(() => {
     requireSupabase()
       .from("organizations")
@@ -39,65 +38,55 @@ function HomePage() {
       .order("name")
       .then(({ data }) => setOrganizations((data || []) as Organization[]));
   }, []);
-  const visible = organizations.filter((item) =>
-    `${item.name} ${item.mode}`.toLowerCase().includes(query.toLowerCase()),
-  );
   return (
     <div className="home-page">
       <header className="topbar">
-        <div className="brand">LOTKEEPER</div>
-        <button onClick={() => navigate("admin")}>Admin</button>
+        <div>
+          <div className="brand">LOTKEEPER</div>
+          <small>Visual places and inventory</small>
+        </div>
+        <button className="quiet-button" onClick={() => navigate("admin")}>
+          Admin
+        </button>
       </header>
       <section className="hero">
-        <p>VISUAL LOCATION + INVENTORY FINDER</p>
-        <h1>
-          Find what is there.
-          <br />
-          Know where it is.
-        </h1>
-        <div className="hero-search">
-          <input
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="Search organizations"
-          />
-          <button>Search</button>
-        </div>
-        <small>
-          Purpose-built for civic spaces, commercial sites, equipment, material
-          and inventory.
-        </small>
+        <p>CHOOSE A PLACE</p>
+        <h1>What would you like to explore?</h1>
+        <small>Select an organization to view its places, items and map.</small>
       </section>
       <main className="organization-list">
         <div className="section-heading">
           <h2>Organizations</h2>
-          <span>{visible.length} available</span>
+          <span>{organizations.length}</span>
         </div>
-        {visible.map((organization) => (
-          <button
-            className="organization-card"
-            key={organization.id}
-            onClick={() => navigate(`org/${organization.slug}`)}
-          >
-            <span className={`mode-badge ${organization.mode}`}>
-              {organization.mode}
-            </span>
-            <div>
-              <strong>{organization.name}</strong>
-              <small>
-                {organization.collections
-                  .filter(
-                    (item) =>
-                      item.publicVisible || organization.mode === "commercial",
-                  )
-                  .map((item) => item.name)
-                  .join(" · ")}
-              </small>
-            </div>
-            <b>Open →</b>
-          </button>
-        ))}
-        {!visible.length && (
+        <div className="organization-grid">
+          {organizations.map((organization) => (
+            <button
+              className="organization-card"
+              key={organization.id}
+              onClick={() => navigate(`org/${organization.slug}`)}
+            >
+              <span className={`mode-badge ${organization.mode}`}>
+                {organization.mode}
+              </span>
+              <div>
+                <strong>{organization.name}</strong>
+                <small>
+                  {organization.collections
+                    .filter(
+                      (item) =>
+                        item.publicVisible ||
+                        organization.mode === "commercial",
+                    )
+                    .map((item) => item.name)
+                    .join(" · ")}
+                </small>
+              </div>
+              <b aria-hidden="true">→</b>
+            </button>
+          ))}
+        </div>
+        {!organizations.length && (
           <div className="empty">
             <h2>No organizations yet</h2>
             <p>Create the first organization from the admin console.</p>

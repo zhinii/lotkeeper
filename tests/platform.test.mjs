@@ -95,3 +95,16 @@ test("boundary drawing uses the current map tool and shows every point", async (
   assert.match(editor, /Boundary drawing is active/);
   assert.match(editor, /Add at least 3 points to form an area/);
 });
+
+test("public browsing is organization-first, mobile-friendly and map-linked", async () => {
+  const home = await read("src/App.tsx");
+  const directory = await read("src/pages/DirectoryPage.tsx");
+  assert.doesNotMatch(home, /Search organizations/);
+  assert.match(home, /organization-grid/);
+  assert.match(directory, /collection-nav/);
+  assert.match(directory, /record-grid/);
+  assert.match(directory, /onSelect=\{openRecord\}/);
+  assert.match(directory, /record-detail-sheet/);
+  assert.match(directory, /floating-add/);
+  assert.doesNotMatch(directory, /SEARCH RESULTS/);
+});

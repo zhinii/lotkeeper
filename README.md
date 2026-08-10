@@ -14,7 +14,7 @@ Lotkeeper is a mobile-first visual location and inventory finder for civic and c
 - Reservations, ticketing, payments, purchasing or full ERP/accounting functions.
 - Automatic inventory reconciliation with external POS/ERP systems.
 - Turn-by-turn navigation, offline maps or native mobile apps.
-- A no-code user invitation screen; initial users are created/invited through Supabase Authentication.
+- A no-code staff invitation screen; initial users are invited through Supabase Authentication. Invited administrators can use a password or secure email sign-in link.
 - Guaranteed image identification. AI suggestions are search metadata and must be reviewed by a person.
 
 ## Architecture

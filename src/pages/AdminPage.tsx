@@ -19,6 +19,7 @@ type Tab = "overview" | "review" | "records" | "configure" | "create";
 
 export default function AdminPage() {
   const [session, setSession] = useState<any>(null);
+  const [isPlatformAdmin, setIsPlatformAdmin] = useState(false);
   const [organizations, setOrganizations] = useState<Organization[]>([]);
   const [selected, setSelected] = useState<Organization | null>(null);
   const [submissions, setSubmissions] = useState<Submission[]>([]);
@@ -85,12 +86,29 @@ export default function AdminPage() {
     });
     if (error) setMessage(error.message);
   }
+  async function sendMagicLink(formElement: HTMLFormElement) {
+    const form = new FormData(formElement);
+    const email = String(form.get("email") || "").trim();
+    if (!email) return setMessage("Enter your administrator email first.");
+    const redirectTo = `${location.origin}${location.pathname}#/admin`;
+    const { error } = await requireSupabase().auth.signInWithOtp({
+      email,
+      options: { emailRedirectTo: redirectTo, shouldCreateUser: false },
+    });
+    setMessage(
+      error
+        ? error.message
+        : "A secure sign-in link was sent. Open it on this device to continue.",
+    );
+  }
   async function loadOrganizations() {
-    const { data, error } = await requireSupabase()
-      .from("organizations")
-      .select("*")
-      .order("name");
+    const client = requireSupabase();
+    const [{ data, error }, { data: platformRows }] = await Promise.all([
+      client.from("organizations").select("*").order("name"),
+      client.from("platform_admins").select("user_id").limit(1),
+    ]);
     if (error) return setMessage(error.message);
+    setIsPlatformAdmin(Boolean(platformRows?.length));
     const rows = (data || []) as Organization[];
     setOrganizations(rows);
     setSelected(
@@ -284,6 +302,13 @@ export default function AdminPage() {
             <input name="password" type="password" required />
           </label>
           <button>Sign in</button>
+          <button
+            type="button"
+            className="quiet"
+            onClick={(event) => sendMagicLink(event.currentTarget.form!)}
+          >
+            Email me a secure sign-in link
+          </button>
           <p className="notice">{message}</p>
           <button
             type="button"
@@ -343,7 +368,9 @@ export default function AdminPage() {
             </option>
           ))}
         </select>
-        <button onClick={() => setTab("create")}>+ New organization</button>
+        {isPlatformAdmin && (
+          <button onClick={() => setTab("create")}>+ New organization</button>
+        )}
         {selected && (
           <button onClick={() => navigate(`org/${selected.slug}`)}>
             Open site ↗

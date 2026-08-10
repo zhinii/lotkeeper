@@ -18,6 +18,11 @@ create table public.organizations (
   updated_at timestamptz not null default now()
 );
 
+create table public.platform_admins (
+  user_id uuid primary key references auth.users(id) on delete cascade,
+  created_at timestamptz not null default now()
+);
+
 create table public.organization_members (
   organization_id uuid not null references public.organizations(id) on delete cascade,
   user_id uuid not null references auth.users(id) on delete cascade,
@@ -132,6 +137,7 @@ create index searches_org_created on public.search_events(organization_id,create
 create index alerts_org_status on public.alerts(organization_id,status,created_at desc);
 
 alter table public.organizations enable row level security;
+alter table public.platform_admins enable row level security;
 alter table public.organization_members enable row level security;
 alter table public.records enable row level security;
 alter table public.record_private_data enable row level security;
@@ -144,6 +150,10 @@ alter table public.alerts enable row level security;
 create or replace function public.is_org_member(target uuid)
 returns boolean language sql stable security definer set search_path=public
 as $$ select exists(select 1 from public.organization_members where organization_id=target and user_id=auth.uid()) $$;
+
+create or replace function public.is_platform_admin()
+returns boolean language sql stable security definer set search_path=public
+as $$ select exists(select 1 from public.platform_admins where user_id=auth.uid()) $$;
 
 create or replace function public.is_org_admin(target uuid)
 returns boolean language sql stable security definer set search_path=public
@@ -180,6 +190,7 @@ as $$
 $$;
 
 create policy organizations_read on public.organizations for select using (public_access or public.is_org_member(id) or created_by=auth.uid());
+create policy platform_admin_self_read on public.platform_admins for select to authenticated using (user_id=auth.uid());
 create policy organizations_admin_update on public.organizations for update to authenticated using (public.is_org_admin(id)) with check (public.is_org_admin(id));
 create policy members_read on public.organization_members for select to authenticated using (user_id=auth.uid() or public.is_org_admin(organization_id));
 create policy members_admin_manage on public.organization_members for all to authenticated using (public.is_org_admin(organization_id)) with check (public.is_org_admin(organization_id));
@@ -202,6 +213,7 @@ create or replace function public.create_organization(org_name text, org_slug te
 returns uuid language plpgsql security definer set search_path=public
 as $$ declare new_id uuid; begin
   if auth.uid() is null then raise exception 'Authentication required'; end if;
+  if not public.is_platform_admin() then raise exception 'Platform administrator access required'; end if;
   insert into public.organizations(name,slug,mode,public_access,center_lat,center_lng,map_zoom,collections,created_by) values(trim(org_name),lower(trim(org_slug)),org_mode,is_public,latitude,longitude,zoom_level,collection_config,auth.uid()) returning id into new_id;
   insert into public.organization_members(organization_id,user_id,role) values(new_id,auth.uid(),'admin');
   return new_id;
@@ -269,6 +281,7 @@ create policy public_photo_admin_update on storage.objects for update to authent
 
 grant usage on schema public to anon,authenticated;
 grant select on public.organizations,public.records to anon,authenticated;
+grant select on public.platform_admins to authenticated;
 grant select on public.record_private_data to authenticated;
 grant insert on public.submissions to anon,authenticated;
 grant select,insert,update,delete on all tables in schema public to authenticated;

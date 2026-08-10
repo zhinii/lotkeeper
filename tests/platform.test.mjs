@@ -25,6 +25,7 @@ test("schema separates public and private record data and enables RLS", async ()
   const schema = await read("supabase/schema.sql");
   for (const table of [
     "organizations",
+    "platform_admins",
     "organization_members",
     "records",
     "record_private_data",
@@ -40,6 +41,7 @@ test("schema separates public and private record data and enables RLS", async ()
     /alter table public\.record_private_data enable row level security/,
   );
   assert.match(schema, /create policy submissions_create/);
+  assert.match(schema, /Platform administrator access required/);
   assert.match(schema, /create or replace function public\.approve_submission/);
 });
 

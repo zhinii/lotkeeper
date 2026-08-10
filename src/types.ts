@@ -88,6 +88,7 @@ export type Submission = {
     search_terms?: string[];
     warnings?: string[];
     error?: string;
+    description_applied?: boolean;
   };
 };
 

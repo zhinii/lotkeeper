@@ -14,6 +14,7 @@ import type {
   LocationSource,
   Organization,
   RecordItem,
+  Submission,
 } from "../types";
 
 type Point = {
@@ -21,6 +22,14 @@ type Point = {
   lng: number;
   accuracy: number | null;
   source: LocationSource;
+};
+
+type AnalysisState = "idle" | "analyzing" | "complete" | "unavailable";
+
+type EnrichmentResponse = {
+  status?: string;
+  suggestions?: Submission["ai_suggestions"];
+  description_applied?: boolean;
 };
 
 function localDateTime(isoDate: string | null) {
@@ -54,6 +63,13 @@ export default function SubmitPage({
   const [point, setPoint] = useState<Point | null>(null);
   const [status, setStatus] = useState("");
   const [sending, setSending] = useState(false);
+  const [submitted, setSubmitted] = useState(false);
+  const [submittedDescription, setSubmittedDescription] = useState("");
+  const [analysisState, setAnalysisState] = useState<AnalysisState>("idle");
+  const [aiSuggestions, setAiSuggestions] = useState<
+    Submission["ai_suggestions"] | null
+  >(null);
+  const [aiDescriptionApplied, setAiDescriptionApplied] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -197,8 +213,8 @@ export default function SubmitPage({
     const form = new FormData(event.currentTarget);
     const id = crypto.randomUUID();
     let photoPath: string | null = null;
+    const client = requireSupabase();
     try {
-      const client = requireSupabase();
       if (photo) {
         const extension =
           photo.name
@@ -256,17 +272,32 @@ export default function SubmitPage({
           organization.ai_enabled && photo ? "queued" : "not_requested",
       });
       if (error) throw error;
-      if (organization.ai_enabled && photo)
-        client.functions
-          .invoke("enrich-submission", { body: { submission_id: id } })
-          .catch(() => undefined);
-      setStatus(
-        "Submitted for administrator review. The current public record remains unchanged until approval.",
-      );
+      setSubmittedDescription(description.trim());
+      setSubmitted(true);
       setSending(false);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Submission failed.");
       setSending(false);
+      return;
+    }
+
+    if (organization.ai_enabled && photo) {
+      setAnalysisState("analyzing");
+      try {
+        const { data: enrichment, error } = await client.functions.invoke(
+          "enrich-submission",
+          { body: { submission_id: id } },
+        );
+        if (error) throw error;
+        const result = enrichment as EnrichmentResponse | null;
+        if (result?.status === "complete" && result.suggestions) {
+          setAiSuggestions(result.suggestions);
+          setAiDescriptionApplied(Boolean(result.description_applied));
+          setAnalysisState("complete");
+        } else setAnalysisState("unavailable");
+      } catch {
+        setAnalysisState("unavailable");
+      }
     }
   }
 
@@ -278,6 +309,107 @@ export default function SubmitPage({
     );
   const mapLat = point?.lat ?? organization.center_lat;
   const mapLng = point?.lng ?? organization.center_lng;
+  if (submitted)
+    return (
+      <div className="submission-page">
+        <header className="topbar">
+          <div className="brand-button">
+            <b>LOTKEEPER</b>
+            <span>{organization.name}</span>
+          </div>
+        </header>
+        <main className="submission-complete">
+          <section className="submitted-card">
+            <span className="submitted-check" aria-hidden="true">
+              ✓
+            </span>
+            <small>SUBMITTED</small>
+            <h1>Your submission is in review</h1>
+            <p>
+              It will not appear publicly until an administrator approves it.
+              You do not need to submit it again.
+            </p>
+            {preview && <img src={preview} alt="Submitted" />}
+            <dl>
+              <div>
+                <dt>Item</dt>
+                <dd>{name}</dd>
+              </div>
+              <div>
+                <dt>Description sent for review</dt>
+                <dd>
+                  {submittedDescription ||
+                    (aiDescriptionApplied
+                      ? aiSuggestions?.description
+                      : analysisState === "analyzing"
+                        ? "Waiting for photo suggestions"
+                        : "No description was provided")}
+                </dd>
+              </div>
+              <div>
+                <dt>GPS coordinates</dt>
+                <dd>
+                  {point
+                    ? `${point.lat.toFixed(6)}, ${point.lng.toFixed(6)}`
+                    : "Recorded"}
+                </dd>
+              </div>
+            </dl>
+          </section>
+
+          {analysisState === "analyzing" && (
+            <section className="submitter-ai-card analyzing" aria-live="polite">
+              <span className="ai-spinner" aria-hidden="true" />
+              <div>
+                <small>PHOTO SUGGESTIONS</small>
+                <h2>Looking at the image…</h2>
+                <p>This normally takes a few seconds.</p>
+              </div>
+            </section>
+          )}
+          {analysisState === "complete" && aiSuggestions && (
+            <section className="submitter-ai-card" aria-live="polite">
+              <small>AI PHOTO SUGGESTIONS</small>
+              <h2>{aiSuggestions.category || "Suggested details"}</h2>
+              <p>{aiSuggestions.description}</p>
+              {aiDescriptionApplied && (
+                <b className="ai-applied-note">
+                  This description was added to your submission for review.
+                </b>
+              )}
+              {!!aiSuggestions.keywords?.length && (
+                <div className="suggestion-keywords">
+                  {aiSuggestions.keywords.map((keyword) => (
+                    <span key={keyword}>{keyword}</span>
+                  ))}
+                </div>
+              )}
+              <small>
+                These are suggestions only. The administrator will verify them.
+              </small>
+            </section>
+          )}
+          {analysisState === "unavailable" && (
+            <section
+              className="submitter-ai-card unavailable"
+              aria-live="polite"
+            >
+              <small>PHOTO SUGGESTIONS</small>
+              <h2>Suggestions were not available</h2>
+              <p>
+                Your submission was still received and can be reviewed normally.
+              </p>
+            </section>
+          )}
+          <button
+            className="return-to-place"
+            onClick={() => navigate(`org/${organization.slug}`)}
+          >
+            Return to {organization.name}
+          </button>
+        </main>
+      </div>
+    );
   return (
     <div className="submission-page">
       <header className="topbar">
@@ -336,14 +468,25 @@ export default function SubmitPage({
               />
             </label>
             <label>
-              Description
+              Description{organization.ai_enabled ? " (optional)" : ""}
               <textarea
                 value={description}
                 onChange={(event) => setDescription(event.target.value)}
                 rows={4}
-                required
+                required={!organization.ai_enabled || !photo}
                 maxLength={2000}
+                placeholder={
+                  organization.ai_enabled
+                    ? "Add any helpful details."
+                    : "Describe what is shown."
+                }
               />
+              {organization.ai_enabled && (
+                <small className="field-helper">
+                  Optional. If left blank, a description will be filled in
+                  automatically from the photo.
+                </small>
+              )}
             </label>
             {organization.mode === "civic" && (
               <label>
@@ -438,13 +581,26 @@ export default function SubmitPage({
                 }
               />
               {preview ? (
-                <img src={preview} alt="Selected" />
+                <div className="selected-photo-preview">
+                  <img src={preview} alt="Selected" />
+                  <strong>Tap to change photo</strong>
+                </div>
               ) : target?.photo_path ? (
-                <img src={publicPhoto(target.photo_path)} alt="Current" />
+                <div className="selected-photo-preview">
+                  <img src={publicPhoto(target.photo_path)} alt="Current" />
+                  <strong>Tap to replace this photo</strong>
+                </div>
               ) : (
-                <div>
-                  <b>Open camera or choose photo</b>
-                  <small>GPS and capture date are read when available.</small>
+                <div className="photo-picker-copy">
+                  <span className="photo-add-icon" aria-hidden="true">
+                    +
+                  </span>
+                  <b>Take or upload a photo</b>
+                  <small>
+                    Tap here to open the camera or choose an image from your
+                    device.
+                  </small>
+                  <strong>Choose photo</strong>
                 </div>
               )}
             </label>

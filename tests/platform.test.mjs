@@ -84,3 +84,14 @@ test("admin onboarding exposes deployment type, fields and a clear empty state",
   assert.match(admin, /value=\{createCollections\}/);
   assert.match(admin, /Map and boundary/);
 });
+
+test("boundary drawing uses the current map tool and shows every point", async () => {
+  const map = await read("src/components/MapView.tsx");
+  const editor = await read("src/components/OrganizationMapEditor.tsx");
+  assert.match(map, /interactionMode\.current\.boundaryEditor/);
+  assert.match(map, /currentBoundary\.current/);
+  assert.match(map, /type: "Point"/);
+  assert.match(map, /type: "LineString"/);
+  assert.match(editor, /Boundary drawing is active/);
+  assert.match(editor, /Add at least 3 points to form an area/);
+});

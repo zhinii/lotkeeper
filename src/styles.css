@@ -891,6 +891,20 @@ button:disabled {
   min-height: 330px;
   border: 1px solid var(--line);
 }
+.map-view.boundary-editor canvas {
+  cursor: crosshair;
+}
+.map-tool-status {
+  margin-top: 10px;
+  border-left: 5px solid var(--blue);
+  background: var(--soft);
+  padding: 11px 13px;
+  line-height: 1.45;
+}
+.map-tool-status.boundary {
+  border-left-color: var(--yellow);
+  background: #fff7cf;
+}
 .map-editor-controls {
   padding-top: 10px;
 }

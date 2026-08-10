@@ -30,6 +30,7 @@ test("schema separates public and private record data and enables RLS", async ()
     "records",
     "record_private_data",
     "submissions",
+    "ai_usage_events",
     "inventory_transactions",
     "search_events",
     "alerts",
@@ -51,7 +52,7 @@ test("public submission workflow requires mapped evidence and moderation", async
   assert.match(submit, /readGps/);
   assert.match(submit, /browser_gps/);
   assert.match(submit, /manual_pin/);
-  assert.match(submit, /A mapped location is required/);
+  assert.match(submit, /Place the item on the map before submitting/);
   assert.match(admin, /approve_submission/);
   assert.match(admin, /Delete from history/);
 });
@@ -74,6 +75,9 @@ test("image enrichment is server-side, optional and cost limited", async () => {
   assert.match(edge, /messageFrom/);
   assert.match(edge, /detail:\s*"low"/);
   assert.match(edge, /AI_DAILY_LIMIT/);
+  assert.match(edge, /ai_usage_events/);
+  assert.match(edge, /image_data_url/);
+  assert.match(edge, /collection_id/);
   assert.match(edge, /gpt-4o-mini/);
   assert.match(client, /organization\.ai_enabled/);
   assert.match(
@@ -117,6 +121,7 @@ test("public browsing is organization-first, mobile-friendly and map-linked", as
   assert.match(directory, /onSelect=\{openRecord\}/);
   assert.match(directory, /record-detail-sheet/);
   assert.match(directory, /floating-add/);
+  assert.match(directory, /Add a photo/);
   assert.doesNotMatch(directory, /SEARCH RESULTS/);
 });
 
@@ -134,14 +139,17 @@ test("manager console uses plain-language tasks and hides advanced setup", async
   assert.match(map, /Exact map values/);
 });
 
-test("capture forms use consistent civic and commercial inventory fields", async () => {
+test("photo-first review uses consistent civic and commercial inventory fields", async () => {
   const submit = await read("src/pages/SubmitPage.tsx");
   const captureFields = await read("src/lib/captureFields.ts");
   const collections = await read("src/components/CollectionEditor.tsx");
   assert.match(submit, /Item name/);
+  assert.match(submit, /First, take a photo/);
+  assert.match(submit, /Check what Lotkeeper found/);
+  assert.match(submit, /Filled from photo/);
   assert.match(submit, /Date of capture/);
   assert.match(submit, /GPS coordinates/);
-  assert.match(submit, /organization\.mode === "civic"/);
+  assert.match(submit, /organization\.mode === "commercial"/);
   assert.match(submit, /Quantity/);
   assert.match(submit, /quantity: quantity !== ""/);
   assert.match(captureFields, /SKU # \/ asset ID/);
@@ -150,21 +158,39 @@ test("capture forms use consistent civic and commercial inventory fields", async
   assert.match(captureFields, /Manufacturer \/ brand/);
   assert.match(captureFields, /Lot \/ serial number/);
   assert.match(collections, /included\s+automatically/);
-  assert.match(submit, /without\s+.*another photo/s);
+  assert.match(submit, /without a new photo/);
 });
 
-test("submitters get a locked confirmation and visible AI photo suggestions", async () => {
+test("submitters review AI and EXIF values before a locked confirmation", async () => {
   const submit = await read("src/pages/SubmitPage.tsx");
   const edge = await read("supabase/functions/enrich-submission/index.ts");
   assert.match(submit, /SUBMITTED/);
-  assert.match(submit, /You do not need to submit it again/);
-  assert.match(submit, /AI PHOTO SUGGESTIONS/);
-  assert.match(submit, /Take or upload a photo/);
-  assert.match(submit, /Choose photo/);
-  assert.match(submit, /description will be filled in\s+automatically/);
-  assert.match(submit, /Tap to change photo/);
-  assert.match(submit, /setSubmitted\(true\)/);
-  assert.match(edge, /suggestions,/);
-  assert.match(edge, /description_applied/);
-  assert.match(edge, /proposed: descriptionApplied/);
+  assert.match(submit, /You\s+do not need to submit it again/);
+  assert.match(submit, /Take a photo/);
+  assert.match(submit, /Choose a photo/);
+  assert.match(submit, /setStep\("review"\)/);
+  assert.match(submit, /image_data_url/);
+  assert.ok(
+    submit.indexOf("image_data_url") < submit.indexOf('.from("submissions").insert'),
+    "AI preview should happen before the final submission insert",
+  );
+  assert.match(edge, /Photo-first preview/);
+  assert.match(edge, /store: false/);
+});
+
+test("Lotkeeper is installable while retaining the GitHub Pages website", async () => {
+  const [html, main, manifest, worker] = await Promise.all([
+    read("index.html"),
+    read("src/main.tsx"),
+    read("public/manifest.webmanifest"),
+    read("public/sw.js"),
+  ]);
+  assert.match(html, /manifest\.webmanifest/);
+  assert.match(html, /apple-mobile-web-app-capable/);
+  assert.match(main, /serviceWorker\.register/);
+  assert.match(manifest, /"display": "standalone"/);
+  assert.match(manifest, /icon-192\.png/);
+  assert.match(manifest, /icon-512\.png/);
+  assert.match(worker, /lotkeeper-shell-v1/);
+  assert.match(worker, /request\.mode === "navigate"/);
 });

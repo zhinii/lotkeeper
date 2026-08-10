@@ -161,6 +161,12 @@ test("organization admins can manage employee access and owners can delete deplo
   assert.match(manager, /organization owner or platform administrator/);
   assert.match(manager, /storage[\s\S]*submission-media/);
   assert.match(manager, /storage[\s\S]*public-records/);
+  const permissions = await read(
+    "supabase/migrations/20260810_organization_management_permissions.sql",
+  );
+  assert.match(permissions, /organizations to service_role/);
+  assert.match(permissions, /organization_members to service_role/);
+  assert.match(permissions, /platform_admins to service_role/);
 });
 
 test("employee photo review uses consistent inventory fields and visibility", async () => {

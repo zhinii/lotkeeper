@@ -155,6 +155,8 @@ export default function AdminPage() {
     longitude: -111.4573,
   });
   const [recordQuery, setRecordQuery] = useState("");
+  const [recordCollection, setRecordCollection] = useState("");
+  const [recordCategory, setRecordCategory] = useState("");
 
   useEffect(() => {
     const client = requireSupabase();
@@ -181,6 +183,9 @@ export default function AdminPage() {
         latitude: selected.center_lat,
         longitude: selected.center_lng,
       });
+      setRecordCollection("");
+      setRecordCategory("");
+      setRecordQuery("");
       setSubmissionPhotos({});
       loadWorkspace(selected.id);
       loadMembers(selected.id);
@@ -195,6 +200,12 @@ export default function AdminPage() {
     );
     void loadSubmissionPhotos(reviewSubmissions);
   }, [tab, reviewView, submissions]);
+  useEffect(() => {
+    if (tab !== "records") return;
+    setRecordCollection("");
+    setRecordCategory("");
+    setRecordQuery("");
+  }, [tab]);
 
   async function login(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -755,7 +766,27 @@ export default function AdminPage() {
   const reviewItems = reviewView === "pending" ? pending : resolved;
   const openAlerts = alerts.filter((item) => item.status === "open");
   const resolvedAlerts = alerts.filter((item) => item.status === "resolved");
+  const recordCollectionOptions = (selected?.collections || []).map(
+    (collection) => ({
+      ...collection,
+      count: records.filter((item) => item.collection_id === collection.id)
+        .length,
+    }),
+  );
+  const recordCategoryOptions = Object.entries(
+    records
+      .filter((item) => item.collection_id === recordCollection)
+      .reduce<Record<string, RecordItem[]>>((groups, item) => {
+        const category = item.category?.trim() || "Uncategorized";
+        (groups[category] ||= []).push(item);
+        return groups;
+      }, {}),
+  ).sort(([left], [right]) => left.localeCompare(right));
   const visibleRecords = records.filter((item) => {
+    if (!recordCollection || !recordCategory) return false;
+    if (item.collection_id !== recordCollection) return false;
+    if ((item.category?.trim() || "Uncategorized") !== recordCategory)
+      return false;
     const query = recordQuery.trim().toLowerCase();
     if (!query) return true;
     return [
@@ -1224,11 +1255,75 @@ export default function AdminPage() {
           <>
             <div className="admin-title">
               <small>INVENTORY AND MAP PINS</small>
-              <h1>Manage every item</h1>
+              <h1>Choose what to manage</h1>
               <p>
-                Edit details, visibility, quantities and exact map locations.
+                Pick an item group and category. Only those inventory records
+                will open below.
               </p>
             </div>
+            <section className="inventory-picker panel">
+              <div className="inventory-picker-step">
+                <span>1</span>
+                <div>
+                  <h2>Choose an item group</h2>
+                  <p>Start with the broad type of inventory.</p>
+                </div>
+              </div>
+              <div className="inventory-picker-options">
+                {recordCollectionOptions.map((collection) => (
+                  <button
+                    type="button"
+                    className={
+                      recordCollection === collection.id ? "active" : ""
+                    }
+                    aria-pressed={recordCollection === collection.id}
+                    key={collection.id}
+                    onClick={() => {
+                      setRecordCollection(collection.id);
+                      setRecordCategory("");
+                      setRecordQuery("");
+                    }}
+                  >
+                    <span>{collection.icon || collection.name.charAt(0)}</span>
+                    <b>{collection.name}</b>
+                    <small>{collection.count} items</small>
+                  </button>
+                ))}
+              </div>
+              {!!recordCollection && (
+                <>
+                  <div className="inventory-picker-step second">
+                    <span>2</span>
+                    <div>
+                      <h2>Choose a category</h2>
+                      <p>Open only the records you need to work with.</p>
+                    </div>
+                  </div>
+                  <div className="inventory-category-options">
+                    {recordCategoryOptions.map(([category, items]) => (
+                      <button
+                        type="button"
+                        className={recordCategory === category ? "active" : ""}
+                        aria-pressed={recordCategory === category}
+                        key={category}
+                        onClick={() => {
+                          setRecordCategory(category);
+                          setRecordQuery("");
+                        }}
+                      >
+                        <b>{category}</b>
+                        <span>{items.length}</span>
+                      </button>
+                    ))}
+                    {!recordCategoryOptions.length && (
+                      <p className="inventory-picker-empty">
+                        This item group has no approved inventory yet.
+                      </p>
+                    )}
+                  </div>
+                </>
+              )}
+            </section>
             {selected && (
               <details className="csv-import panel">
                 <summary>
@@ -1310,19 +1405,24 @@ export default function AdminPage() {
                 </form>
               </details>
             )}
-            <div className="inventory-toolbar">
-              <label>
-                <span>Find an item</span>
-                <input
-                  type="search"
-                  value={recordQuery}
-                  onChange={(event) => setRecordQuery(event.target.value)}
-                  placeholder="Name, SKU, category or location"
-                />
-              </label>
-              <output>{visibleRecords.length} active items</output>
-            </div>
-            <div className="inventory-management">
+            {!!recordCollection && !!recordCategory && (
+              <div className="inventory-toolbar">
+                <label>
+                  <span>Find an item</span>
+                  <input
+                    type="search"
+                    value={recordQuery}
+                    onChange={(event) => setRecordQuery(event.target.value)}
+                    placeholder="Name, SKU, category or location"
+                  />
+                </label>
+                <output>{visibleRecords.length} active items</output>
+              </div>
+            )}
+            <div
+              className="inventory-management"
+              hidden={!recordCollection || !recordCategory}
+            >
               {recordGroups.map(({ collection, categories }) => (
                 <section className="inventory-group" key={collection.id}>
                   <header>

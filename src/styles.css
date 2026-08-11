@@ -2099,7 +2099,10 @@ body:has(.directory-page) {
 }
 
 .directory-page .map-pin {
-  position: relative;
+  /* MapLibre positions markers with an inline transform from this absolute
+     origin. Relative positioning adds each marker's layout-flow offset and
+     makes pins drift as the map zoom changes. */
+  position: absolute;
   width: 28px;
   height: 28px;
   padding: 0;
@@ -5353,6 +5356,112 @@ body:has(.login-page) {
   border-radius: 14px;
   background: white;
 }
+.inventory-picker {
+  display: grid;
+  gap: 18px;
+  margin: 20px 0;
+  padding: 20px;
+}
+.inventory-picker-step {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+.inventory-picker-step > span {
+  display: grid;
+  flex: 0 0 38px;
+  width: 38px;
+  height: 38px;
+  place-items: center;
+  border-radius: 10px;
+  background: var(--navy);
+  color: white;
+  font-weight: 950;
+}
+.inventory-picker-step h2,
+.inventory-picker-step p {
+  margin: 0;
+}
+.inventory-picker-step p {
+  margin-top: 3px;
+  color: var(--muted);
+}
+.inventory-picker-step.second {
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+.inventory-picker-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.inventory-picker-options button {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 10px;
+  align-items: center;
+  padding: 14px;
+  border: 2px solid var(--line);
+  border-radius: 13px;
+  background: white;
+  color: var(--navy);
+  text-align: left;
+}
+.inventory-picker-options button > span {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border-radius: 9px;
+  background: var(--soft);
+  font-weight: 950;
+}
+.inventory-picker-options button small {
+  color: var(--muted);
+}
+.inventory-picker-options button.active,
+.inventory-category-options button.active {
+  border-color: var(--navy);
+  background: #e8f1ec;
+  box-shadow: inset 0 0 0 1px var(--navy);
+}
+.inventory-category-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 9px;
+}
+.inventory-category-options button {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  justify-content: space-between;
+  min-width: 170px;
+  padding: 12px 14px;
+  border: 2px solid var(--line);
+  border-radius: 999px;
+  background: white;
+  color: var(--navy);
+}
+.inventory-category-options button span {
+  display: grid;
+  min-width: 26px;
+  height: 26px;
+  place-items: center;
+  padding: 0 7px;
+  border-radius: 999px;
+  background: var(--navy);
+  color: white;
+  font-size: 11px;
+  font-weight: 900;
+}
+.inventory-picker-empty {
+  width: 100%;
+  margin: 0;
+  padding: 16px;
+  border-radius: 12px;
+  background: var(--soft);
+  color: var(--muted);
+}
 .ai-instruction-shortcuts {
   display: flex;
   flex-wrap: wrap;
@@ -5446,6 +5555,15 @@ body:has(.login-page) {
   padding: 10px;
 }
 @media (max-width: 760px) {
+  .inventory-picker-options {
+    grid-template-columns: 1fr;
+  }
+  .inventory-category-options {
+    display: grid;
+  }
+  .inventory-category-options button {
+    width: 100%;
+  }
   .inventory-toolbar {
     align-items: stretch;
     flex-direction: column;

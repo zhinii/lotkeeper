@@ -115,6 +115,8 @@ test("boundary drawing uses the current map tool and shows every point", async (
   assert.match(map, /type: "LineString"/);
   assert.match(map, /instance\.dragPan/);
   assert.match(map, /instance\.touchZoomRotate/);
+  assert.match(map, /Number\.isFinite\(numericLatitude\)/);
+  assert.match(map, /recordLatitude < -90/);
   assert.match(map, /boundaryEditor \? control\?\.disable\(\)/);
   assert.match(editor, /Boundary drawing is active/);
   assert.match(editor, /map is locked while drawing/);
@@ -220,7 +222,10 @@ test("submitters review AI and EXIF values before a locked confirmation", async 
   assert.match(submit, /prepareSubmissionPhoto/);
   assert.match(submit, /"photo" \| "crop" \| "review" \| "complete"/);
   assert.match(submit, /await cropPhoto\(sourcePhoto, crop\)/);
-  assert.match(submit, /Only the area inside the frame will be analyzed and saved/);
+  assert.match(
+    submit,
+    /Only the area inside the frame will be analyzed and saved/,
+  );
   assert.match(submit, /Use this crop/);
   assert.match(cropper, /canvas\.toBlob/);
   assert.match(cropper, /Cropped photo preview/);
@@ -233,6 +238,14 @@ test("submitters review AI and EXIF values before a locked confirmation", async 
   assert.match(cropper, /This photo cannot be opened/);
   assert.match(submit, /disabled=\{preparing \|\| !cropReady\}/);
   assert.match(submit, /normalizeCollections/);
+  assert.match(submit, /validCoordinate\(coordinates\?\.latitude, -90, 90\)/);
+  assert.match(
+    submit,
+    /validCoordinate\(coordinates\?\.longitude, -180, 180\)/,
+  );
+  assert.match(submit, /metadata\?\.GPSLatitude/);
+  assert.match(submit, /metadata\?\.GPSLongitude/);
+  assert.match(submit, /function exifCoordinate/);
   assert.match(submit, /safeWarnings/);
   const cropStart = submit.indexOf("async function confirmCrop");
   const cropCall = submit.indexOf("await cropPhoto", cropStart);
@@ -269,6 +282,6 @@ test("Material Pin is installable while retaining the GitHub Pages website", asy
   assert.match(manifest, /"name": "Material Pin"/);
   assert.match(manifest, /icon-192\.png/);
   assert.match(manifest, /icon-512\.png/);
-  assert.match(worker, /material-pin-shell-v5/);
+  assert.match(worker, /material-pin-shell-v6/);
   assert.match(worker, /request\.mode === "navigate"/);
 });

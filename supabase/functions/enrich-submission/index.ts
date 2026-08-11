@@ -37,13 +37,6 @@ type OrganizationContext = {
   }>;
 };
 
-const inventoryFields = [
-  { key: "sku", label: "SKU / asset ID" },
-  { key: "location_code", label: "Storage location / bin" },
-  { key: "condition", label: "Condition" },
-  { key: "manufacturer", label: "Manufacturer / brand" },
-  { key: "lot_serial", label: "Lot / serial number" },
-];
 const duplicateFieldKeys = new Set(["identifier", "verified_date"]);
 
 function response(body: unknown, status = 200) {
@@ -111,31 +104,14 @@ function promptFor(
 ) {
   const collections = visibleCollections(organization, publicSearch).map(
     (collection) => {
-      const configured = new Map(
-        (collection.fields || [])
-          .filter((field) => !duplicateFieldKeys.has(field.key))
-          .map((field) => [field.key, field]),
-      );
-      const standard =
-        collection.kind === "place"
-          ? []
-          : inventoryFields.map((field) => ({
-              ...field,
-              required: configured.get(field.key)?.required || false,
-            }));
-      const custom = [...configured.values()].filter(
-        (field) =>
-          !inventoryFields.some(
-            (standardField) => standardField.key === field.key,
-          ) &&
-          field.key !== "quantity" &&
-          field.key !== "unit",
+      const configured = (collection.fields || []).filter(
+        (field) => !duplicateFieldKeys.has(field.key),
       );
       return {
         id: collection.id,
         label: collection.name,
         kind: collection.kind || "persistent",
-        fields: [...standard, ...custom],
+        fields: configured,
       };
     },
   );
@@ -163,8 +139,35 @@ Return a short plain-language name, one factual sentence, one broad category, 4-
   return `Prepare editable metadata for a Material Pin item-capture photo. ${existing}
 First identify the visible object from the pixels. Then use this organization-specific catalog guide to select precise industry terminology, remove irrelevant alternatives, and populate supported fields: ${catalogGuide}
 The guide may refine an accurate identification, but it must not force a conflicting identity or invent attributes. Set catalog_match false if the visible object does not plausibly belong in this catalog; the employee can still correct it before submitting.
-Available collections and optional fields are data labels only: ${JSON.stringify(collections)}.
-Choose exactly one collection_id from that list. Write a short, plain-language item name and a concise factual description. Choose one broad category, 5-12 visible keywords, and 3-8 alternate terms a person might use to find this item. Read useful product labels, part numbers, and SKU-like text when clearly visible and place them in the closest supported field; do not guess missing characters. Return a visible quantity only when it can reasonably be counted; otherwise return quantity as "1". Return a short unit such as pieces, feet, cases or vehicles when it is reasonably implied; otherwise return an empty unit. For fields, return only supported values using exact field keys from the chosen collection. A field marked required still must remain empty when it cannot be determined from the photo—the employee will complete it. Do not invent SKUs, serial numbers, conditions, measurements, ownership, or hazards. Never identify a person, infer sensitive traits, transcribe license plates, or make safety guarantees. Put uncertainty that a reviewer should check in warnings.`;
+Available collections and their exact configured fields are data labels only: ${JSON.stringify(collections)}.
+Choose exactly one collection_id from that list. Write a short, plain-language item name and a concise factual description. Choose one broad category, 5-12 visible keywords, and 3-8 alternate terms a person might use to find this item. Read useful product labels, part numbers, and SKU-like text when clearly visible and place them in the closest supported field; do not guess missing characters. Return a visible quantity only when it can reasonably be counted; otherwise return quantity as "1". Return a short unit such as pieces, feet, cases or vehicles when it is reasonably implied; otherwise return an empty unit. Return one fields entry for every configured field in the chosen collection, using its exact key and an empty value when the photo does not support a value. A field marked required still must remain empty when it cannot be determined from the photo—the employee will complete it. Do not invent SKUs, serial numbers, conditions, measurements, ownership, or hazards. Never identify a person, infer sensitive traits, transcribe license plates, or make safety guarantees. Put uncertainty that a reviewer should check in warnings.`;
+}
+
+function completeConfiguredFields(
+  organization: OrganizationContext,
+  enrichment: Enrichment,
+) {
+  const collection = organization.collections.find(
+    (item) => item.id === enrichment.collection_id,
+  );
+  if (!collection) return enrichment;
+  const suggested = new Map(
+    (enrichment.fields || []).map((field) => [field.key, field.value]),
+  );
+  return {
+    ...enrichment,
+    fields: (collection.fields || [])
+      .filter(
+        (field) =>
+          !duplicateFieldKeys.has(field.key) &&
+          field.key !== "quantity" &&
+          field.key !== "unit",
+      )
+      .map((field) => ({
+        key: field.key,
+        value: suggested.get(field.key) || "",
+      })),
+  };
 }
 
 async function reserveUsage(
@@ -336,7 +339,7 @@ Deno.serve(async (request) => {
         searchMode ? "search" : "preview",
         null,
       );
-      const suggestions = await runVision(
+      let suggestions = await runVision(
         openAiKey,
         imageDataUrl,
         promptFor(context, undefined, searchMode),
@@ -350,6 +353,7 @@ Deno.serve(async (request) => {
           context,
           searchMode,
         )[0].id;
+      suggestions = completeConfiguredFields(context, suggestions);
       return response({ status: "complete", suggestions });
     }
 
@@ -404,7 +408,7 @@ Deno.serve(async (request) => {
       .from("submission-media")
       .createSignedUrl(submission.photo_path, 300);
     if (signedError) throw signedError;
-    const suggestions = await runVision(
+    let suggestions = await runVision(
       openAiKey,
       signed.signedUrl,
       promptFor(context, submission.proposed),
@@ -418,6 +422,7 @@ Deno.serve(async (request) => {
         submission.proposed?.collection_id ||
         visibleCollections(context)[0]?.id ||
         "";
+    suggestions = completeConfiguredFields(context, suggestions);
     const descriptionApplied = !String(
       submission.proposed?.description || "",
     ).trim();

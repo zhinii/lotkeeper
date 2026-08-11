@@ -193,10 +193,11 @@ test("organization admins can manage employee access and owners can delete deplo
   assert.match(permissions, /platform_admins to service_role/);
 });
 
-test("employee photo review uses consistent inventory fields and visibility", async () => {
+test("employee and manager use one configurable item detail model", async () => {
   const submit = await read("src/pages/SubmitPage.tsx");
   const captureFields = await read("src/lib/captureFields.ts");
   const collections = await read("src/components/CollectionEditor.tsx");
+  const manager = await read("src/pages/AdminPage.tsx");
   assert.match(submit, /Item name/);
   assert.match(submit, /Open the camera and take a photo/);
   assert.match(submit, /Filled from photo/);
@@ -205,19 +206,37 @@ test("employee photo review uses consistent inventory fields and visibility", as
   assert.match(submit, /GPS coordinates/);
   assert.match(submit, /publicVisible/);
   assert.match(submit, /Show this item on the public site/);
-  assert.match(submit, /Quantity/);
-  assert.match(submit, /collection\.kind !== "place"/);
+  assert.match(submit, /configuredCaptureFields/);
+  assert.match(submit, /Item details/);
   assert.match(captureFields, /SKU \/ asset ID/);
   assert.match(captureFields, /Storage location \/ bin/);
   assert.match(captureFields, /Condition/);
   assert.match(captureFields, /Manufacturer \/ brand/);
   assert.match(captureFields, /Lot \/ serial number/);
-  assert.match(collections, /Leave them optional unless/);
+  assert.match(collections, /Employees,[\s\S]*managers and AI/);
   assert.match(collections, /Required/);
+  assert.match(collections, /Visible publicly/);
+  assert.doesNotMatch(collections, /Extra information/);
+  assert.doesNotMatch(collections, /Visitors can fill it in/);
   assert.doesNotMatch(collections, /Identifier/);
   assert.doesNotMatch(collections, /Last verified/);
-  assert.match(submit, /inventoryFieldRequired/);
+  assert.match(manager, /inventory-management/);
+  assert.match(manager, /inventory-category/);
+  assert.match(manager, /AI instructions for this organization/);
   assert.match(submit, /without a new photo/);
+});
+
+test("capture and every review card show a site-context location pin", async () => {
+  const submit = await read("src/pages/SubmitPage.tsx");
+  const manager = await read("src/pages/AdminPage.tsx");
+  const map = await read("src/components/MapView.tsx");
+  assert.match(submit, /markerLatitude={mapLat}/);
+  assert.match(submit, /boundary={organization\.boundary}/);
+  assert.match(manager, /markerLatitude={item\.latitude}/);
+  assert.match(manager, /boundary={selected\?\.boundary}/);
+  assert.match(manager, /showMarker/);
+  assert.match(map, /location-pin/);
+  assert.match(map, /requestAnimationFrame/);
 });
 
 test("submitters choose optional AI after photo and EXIF preparation", async () => {
@@ -331,6 +350,6 @@ test("Material Pin is installable while retaining the GitHub Pages website", asy
   assert.match(manifest, /"name": "Material Pin"/);
   assert.match(manifest, /icon-192\.png/);
   assert.match(manifest, /icon-512\.png/);
-  assert.match(worker, /material-pin-shell-v10/);
+  assert.match(worker, /material-pin-shell-v11/);
   assert.match(worker, /request\.mode === "navigate"/);
 });

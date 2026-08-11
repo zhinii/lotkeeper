@@ -1,10 +1,8 @@
 import { useState } from "react";
 import {
-  customCollectionFields,
+  configuredCaptureFields,
+  fieldDefinition,
   inventoryCaptureFields,
-  inventoryFieldRequired,
-  inventoryFieldsForCollection,
-  normalizeCollection,
 } from "../lib/captureFields";
 import type {
   CollectionDefinition,
@@ -12,13 +10,24 @@ import type {
   FieldType,
 } from "../types";
 
-const fieldPresets: Omit<
-  FieldDefinition,
-  "required" | "publicVisible" | "publicSubmit" | "searchable"
->[] = [
+const extraPresets: Array<
+  Omit<
+    FieldDefinition,
+    "required" | "publicVisible" | "publicSubmit" | "searchable"
+  >
+> = [
   { key: "dimensions", label: "Dimensions", type: "text" },
   { key: "material", label: "Material", type: "text" },
   { key: "department", label: "Department", type: "text" },
+];
+
+const presets = [
+  ...inventoryCaptureFields.map((field) => ({
+    key: field.key,
+    label: field.label,
+    type: field.type as FieldType,
+  })),
+  ...extraPresets,
 ];
 
 const kindLabels: Record<CollectionDefinition["kind"], string> = {
@@ -42,25 +51,34 @@ export default function CollectionEditor({
         position === index ? { ...item, ...patch } : item,
       ),
     );
-  const toggleField = (
+
+  function togglePreset(
     index: number,
-    preset: (typeof fieldPresets)[number],
+    collection: CollectionDefinition,
+    preset: (typeof presets)[number],
     enabled: boolean,
-  ) =>
+  ) {
+    const inventoryPreset = inventoryCaptureFields.find(
+      (field) => field.key === preset.key,
+    );
     update(index, {
       fields: enabled
         ? [
-            ...value[index].fields,
-            {
-              ...preset,
-              required: false,
-              publicVisible: true,
-              publicSubmit: true,
-              searchable: true,
-            },
+            ...collection.fields,
+            inventoryPreset
+              ? fieldDefinition(inventoryPreset)
+              : {
+                  ...preset,
+                  required: false,
+                  publicVisible: true,
+                  publicSubmit: false,
+                  searchable: true,
+                },
           ]
-        : value[index].fields.filter((field) => field.key !== preset.key),
+        : collection.fields.filter((field) => field.key !== preset.key),
     });
+  }
+
   function addCustomField(index: number, collection: CollectionDefinition) {
     const label = (draftLabels[collection.id] || "").trim();
     if (!label) return;
@@ -87,24 +105,24 @@ export default function CollectionEditor({
     });
     setDraftLabels((current) => ({ ...current, [collection.id]: "" }));
   }
-  function setInventoryRequired(
+
+  function updateField(
     index: number,
     collection: CollectionDefinition,
-    key: (typeof inventoryCaptureFields)[number]["key"],
-    required: boolean,
+    key: string,
+    patch: Partial<FieldDefinition>,
   ) {
-    const normalized = normalizeCollection(collection);
     update(index, {
-      fields: normalized.fields.map((field) =>
-        field.key === key ? { ...field, required } : field,
+      fields: collection.fields.map((field) =>
+        field.key === key ? { ...field, ...patch } : field,
       ),
     });
   }
+
   return (
     <div className="collection-editor">
       {value.map((collection, index) => {
-        const customFields = customCollectionFields(collection);
-        const inventoryFields = inventoryFieldsForCollection(collection);
+        const selectedFields = configuredCaptureFields(collection);
         return (
           <details className="collection-builder-card" key={collection.id}>
             <summary>
@@ -114,8 +132,8 @@ export default function CollectionEditor({
               <span>
                 <b>{collection.name}</b>
                 <small>
-                  {kindLabels[collection.kind]} · {customFields.length}{" "}
-                  {customFields.length === 1 ? "extra field" : "extra fields"}
+                  {kindLabels[collection.kind]} · {selectedFields.length}{" "}
+                  {selectedFields.length === 1 ? "detail" : "details"}
                 </small>
               </span>
               <i>Open to edit</i>
@@ -163,184 +181,133 @@ export default function CollectionEditor({
                   Show this list on the public site
                 </label>
               </div>
-              <h4>What information should each entry include?</h4>
-              <p className="field-help">
-                The photo, item name, description, category, keywords, capture
-                date and GPS are always reviewed. AI can suggest values, and the
-                employee can correct them before sending.
-              </p>
-              {!!inventoryFields.length && (
-                <section className="inventory-requirements">
-                  <div>
-                    <h4>Inventory details</h4>
-                    <p>
-                      These same details appear in employee capture and manager
-                      review. Leave them optional unless the employee must enter
-                      a value.
-                    </p>
-                  </div>
-                  <div className="inventory-requirement-list">
-                    {inventoryFields.map((field) => (
-                      <label key={field.key}>
-                        <span>
-                          <b>{field.label}</b>
-                          <small>AI can suggest this when it is visible.</small>
-                        </span>
-                        <input
-                          type="checkbox"
-                          checked={inventoryFieldRequired(
+
+              <section className="unified-item-details">
+                <div>
+                  <h4>Item details</h4>
+                  <p className="field-help">
+                    Choose the information this organization uses. Employees,
+                    managers and AI will all work from this same list.
+                  </p>
+                </div>
+                <div className="preset-fields">
+                  {presets.map((preset) => (
+                    <label key={preset.key}>
+                      <input
+                        type="checkbox"
+                        checked={selectedFields.some(
+                          (field) => field.key === preset.key,
+                        )}
+                        onChange={(event) =>
+                          togglePreset(
+                            index,
                             collection,
-                            field.key,
-                          )}
-                          onChange={(event) =>
-                            setInventoryRequired(
-                              index,
-                              collection,
-                              field.key,
-                              event.target.checked,
-                            )
-                          }
-                        />
-                        Required
-                      </label>
-                    ))}
-                  </div>
-                </section>
-              )}
-              <h4>Extra information</h4>
-              <p className="field-help">
-                Add only information that is not already covered above.
-              </p>
-              <div className="preset-fields">
-                {fieldPresets.map((preset) => (
-                  <label key={preset.key}>
-                    <input
-                      type="checkbox"
-                      checked={collection.fields.some(
-                        (field) => field.key === preset.key,
-                      )}
-                      onChange={(event) =>
-                        toggleField(index, preset, event.target.checked)
-                      }
-                    />
-                    {preset.label}
-                  </label>
-                ))}
-              </div>
-              <div className="custom-field-row">
-                <input
-                  aria-label="New field name"
-                  placeholder="Add your own field"
-                  value={draftLabels[collection.id] || ""}
-                  onChange={(event) =>
-                    setDraftLabels((current) => ({
-                      ...current,
-                      [collection.id]: event.target.value,
-                    }))
-                  }
-                />
-                <select
-                  aria-label="New field type"
-                  value={draftTypes[collection.id] || "text"}
-                  onChange={(event) =>
-                    setDraftTypes((current) => ({
-                      ...current,
-                      [collection.id]: event.target.value as FieldType,
-                    }))
-                  }
-                >
-                  <option value="text">Words</option>
-                  <option value="number">Number</option>
-                  <option value="date">Date</option>
-                  <option value="boolean">Yes or no</option>
-                </select>
-                <button
-                  type="button"
-                  onClick={() => addCustomField(index, collection)}
-                >
-                  Add
-                </button>
-              </div>
-              {!!customFields.length && (
-                <div className="selected-fields">
-                  <h4>Extra information selected</h4>
-                  {customFields.map((field) => (
-                    <div className="field-rules" key={field.key}>
-                      <b>{field.label}</b>
-                      <label>
-                        <input
-                          type="checkbox"
-                          checked={field.required}
-                          onChange={(event) =>
-                            update(index, {
-                              fields: collection.fields.map((item) =>
-                                item.key === field.key
-                                  ? { ...item, required: event.target.checked }
-                                  : item,
-                              ),
-                            })
-                          }
-                        />
-                        Must be filled in
-                      </label>
-                      <label>
-                        <input
-                          type="checkbox"
-                          checked={field.publicVisible}
-                          onChange={(event) =>
-                            update(index, {
-                              fields: collection.fields.map((item) =>
-                                item.key === field.key
-                                  ? {
-                                      ...item,
-                                      publicVisible: event.target.checked,
-                                    }
-                                  : item,
-                              ),
-                            })
-                          }
-                        />
-                        Visitors can see it
-                      </label>
-                      <label>
-                        <input
-                          type="checkbox"
-                          checked={field.publicSubmit}
-                          onChange={(event) =>
-                            update(index, {
-                              fields: collection.fields.map((item) =>
-                                item.key === field.key
-                                  ? {
-                                      ...item,
-                                      publicSubmit: event.target.checked,
-                                    }
-                                  : item,
-                              ),
-                            })
-                          }
-                        />
-                        Visitors can fill it in
-                      </label>
-                      <button
-                        type="button"
-                        className="field-remove"
-                        onClick={() =>
-                          update(index, {
-                            fields: collection.fields.filter(
-                              (item) => item.key !== field.key,
-                            ),
-                          })
+                            preset,
+                            event.target.checked,
+                          )
                         }
-                      >
-                        Remove
-                      </button>
-                    </div>
+                      />
+                      {preset.label}
+                    </label>
                   ))}
                 </div>
-              )}
+                <div className="custom-field-row">
+                  <input
+                    aria-label="New field name"
+                    placeholder="Add your own detail"
+                    value={draftLabels[collection.id] || ""}
+                    onChange={(event) =>
+                      setDraftLabels((current) => ({
+                        ...current,
+                        [collection.id]: event.target.value,
+                      }))
+                    }
+                  />
+                  <select
+                    aria-label="New field type"
+                    value={draftTypes[collection.id] || "text"}
+                    onChange={(event) =>
+                      setDraftTypes((current) => ({
+                        ...current,
+                        [collection.id]: event.target.value as FieldType,
+                      }))
+                    }
+                  >
+                    <option value="text">Words</option>
+                    <option value="number">Number</option>
+                    <option value="date">Date</option>
+                    <option value="boolean">Yes or no</option>
+                  </select>
+                  <button
+                    type="button"
+                    onClick={() => addCustomField(index, collection)}
+                  >
+                    Add
+                  </button>
+                </div>
+
+                {!!selectedFields.length && (
+                  <div className="selected-fields">
+                    {selectedFields.map((field) => (
+                      <div
+                        className="field-rules unified-field-row"
+                        key={field.key}
+                      >
+                        <input
+                          aria-label={`${field.label} label`}
+                          className="field-label-input"
+                          value={field.label}
+                          onChange={(event) =>
+                            updateField(index, collection, field.key, {
+                              label: event.target.value,
+                            })
+                          }
+                        />
+                        <label>
+                          <input
+                            type="checkbox"
+                            checked={field.required}
+                            onChange={(event) =>
+                              updateField(index, collection, field.key, {
+                                required: event.target.checked,
+                              })
+                            }
+                          />
+                          Required
+                        </label>
+                        <label>
+                          <input
+                            type="checkbox"
+                            checked={field.publicVisible}
+                            onChange={(event) =>
+                              updateField(index, collection, field.key, {
+                                publicVisible: event.target.checked,
+                              })
+                            }
+                          />
+                          Visible publicly
+                        </label>
+                        <button
+                          type="button"
+                          className="danger-link"
+                          onClick={() =>
+                            update(index, {
+                              fields: collection.fields.filter(
+                                (item) => item.key !== field.key,
+                              ),
+                            })
+                          }
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </section>
               <button
                 type="button"
-                className="remove-collection"
+                className="danger remove-list-button"
                 onClick={() =>
                   onChange(value.filter((_, position) => position !== index))
                 }
@@ -351,26 +318,6 @@ export default function CollectionEditor({
           </details>
         );
       })}
-      <button
-        type="button"
-        className="add-collection"
-        onClick={() =>
-          onChange([
-            ...value,
-            normalizeCollection({
-              id: `collection-${crypto.randomUUID().slice(0, 8)}`,
-              name: "New collection",
-              icon: "N",
-              kind: "persistent",
-              publicVisible: false,
-              publicSubmit: false,
-              fields: [],
-            }),
-          ])
-        }
-      >
-        + Add another list
-      </button>
     </div>
   );
 }

@@ -69,7 +69,7 @@ export const inventoryDataCaptureFields = inventoryCaptureFields.filter(
 
 const legacyDuplicateKeys = new Set(["identifier", "verified_date"]);
 
-function fieldDefinition(
+export function fieldDefinition(
   field: (typeof inventoryCaptureFields)[number],
   existing?: FieldDefinition,
 ): FieldDefinition {
@@ -85,7 +85,10 @@ function fieldDefinition(
 }
 
 export function inventoryFieldsForCollection(collection: CollectionDefinition) {
-  return collection.kind === "place" ? [] : inventoryCaptureFields;
+  if (collection.kind === "place") return [];
+  return inventoryCaptureFields.filter((preset) =>
+    collection.fields.some((field) => field.key === preset.key),
+  );
 }
 
 export function inventoryFieldRequired(
@@ -112,29 +115,26 @@ export function normalizeCollection(
 ): CollectionDefinition {
   const kind = collection.kind || "persistent";
   const rawFields = Array.isArray(collection.fields) ? collection.fields : [];
-  const existing = new Map(
-    rawFields
-      .filter((field) => !legacyDuplicateKeys.has(field.key))
-      .map((field) => [field.key, field]),
-  );
-  const inventoryFields =
-    kind === "place"
-      ? []
-      : inventoryCaptureFields.map((field) =>
-          fieldDefinition(field, existing.get(field.key)),
-        );
   return {
     ...collection,
     kind,
-    fields: [
-      ...inventoryFields,
-      ...rawFields.filter(
-        (field) =>
-          !inventoryCaptureKeys.has(field.key) &&
-          !legacyDuplicateKeys.has(field.key),
-      ),
-    ].map((field) => ({ ...field })),
+    fields: rawFields
+      .filter((field) => !legacyDuplicateKeys.has(field.key))
+      .filter(
+        (field, index, fields) =>
+          fields.findIndex((candidate) => candidate.key === field.key) ===
+          index,
+      )
+      .map((field) => ({ ...field })),
   };
+}
+
+export function configuredCaptureFields(
+  collection: CollectionDefinition | null,
+) {
+  return (collection?.fields || []).filter(
+    (field) => !legacyDuplicateKeys.has(field.key),
+  );
 }
 
 export function normalizeCollections(collections: CollectionDefinition[]) {

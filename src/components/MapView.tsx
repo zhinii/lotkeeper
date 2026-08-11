@@ -8,6 +8,10 @@ type Props = {
   records?: RecordItem[];
   selectedId?: string | null;
   boundary?: [number, number][];
+  markerLatitude?: number;
+  markerLongitude?: number;
+  markerLabel?: string;
+  showMarker?: boolean;
   picker?: boolean;
   boundaryEditor?: boolean;
   onPick?: (latitude: number, longitude: number) => void;
@@ -28,6 +32,10 @@ export default function MapView({
   records = [],
   selectedId,
   boundary = [],
+  markerLatitude,
+  markerLongitude,
+  markerLabel = "Item location",
+  showMarker,
   picker,
   boundaryEditor,
   onPick,
@@ -54,6 +62,20 @@ export default function MapView({
   const safeZoom = Number.isFinite(numericZoom)
     ? Math.min(22, Math.max(0, numericZoom))
     : 2;
+  const numericMarkerLatitude = Number(markerLatitude);
+  const numericMarkerLongitude = Number(markerLongitude);
+  const safeMarkerLatitude =
+    Number.isFinite(numericMarkerLatitude) &&
+    numericMarkerLatitude >= -90 &&
+    numericMarkerLatitude <= 90
+      ? numericMarkerLatitude
+      : safeLatitude;
+  const safeMarkerLongitude =
+    Number.isFinite(numericMarkerLongitude) &&
+    numericMarkerLongitude >= -180 &&
+    numericMarkerLongitude <= 180
+      ? numericMarkerLongitude
+      : safeLongitude;
   const host = useRef<HTMLDivElement>(null);
   const map = useRef<any>(null);
   const pickMarker = useRef<any>(null);
@@ -99,12 +121,16 @@ export default function MapView({
       new window.maplibregl.NavigationControl({ showCompass: false }),
       "top-right",
     );
-    if (picker || boundaryEditor) {
+    if (picker || boundaryEditor || showMarker) {
+      const markerNode = document.createElement("div");
+      markerNode.className = "location-pin";
+      markerNode.title = markerLabel;
+      markerNode.setAttribute("aria-label", markerLabel);
       pickMarker.current = new window.maplibregl.Marker({
-        draggable: true,
-        color: "#ffcf24",
+        draggable: Boolean(picker || boundaryEditor),
+        element: markerNode,
       })
-        .setLngLat([safeLongitude, safeLatitude])
+        .setLngLat([safeMarkerLongitude, safeMarkerLatitude])
         .addTo(map.current);
       pickMarker.current.on("dragend", () => {
         if (!interactionMode.current.picker) return;
@@ -132,6 +158,10 @@ export default function MapView({
         center.lng,
         Math.round(map.current.getZoom()),
       );
+    });
+    map.current.once("load", () => {
+      map.current?.resize();
+      requestAnimationFrame(() => map.current?.resize());
     });
     return () => map.current?.remove();
   }, []);
@@ -167,8 +197,11 @@ export default function MapView({
         });
       }
     }
-    pickMarker.current?.setLngLat([safeLongitude, safeLatitude]);
   }, [safeLatitude, safeLongitude, safeZoom]);
+
+  useEffect(() => {
+    pickMarker.current?.setLngLat([safeMarkerLongitude, safeMarkerLatitude]);
+  }, [safeMarkerLatitude, safeMarkerLongitude]);
 
   useEffect(() => {
     if (!map.current) return;

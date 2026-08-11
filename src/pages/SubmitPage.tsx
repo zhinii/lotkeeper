@@ -9,10 +9,9 @@ import PhotoCropper, {
 import {
   commercialCaptureFields,
   commercialCaptureKeys,
-  customCollectionFields,
+  configuredCaptureFields,
   emptyCommercialCaptureData,
   inventoryCaptureFields,
-  inventoryFieldRequired,
   normalizeCollections,
   type CommercialCaptureKey,
 } from "../lib/captureFields";
@@ -288,8 +287,7 @@ export default function SubmitPage({
   const [mobileCapturePoint, setMobileCapturePoint] = useState<Point | null>(
     null,
   );
-  const [mobileGpsState, setMobileGpsState] =
-    useState<MobileGpsState>("idle");
+  const [mobileGpsState, setMobileGpsState] = useState<MobileGpsState>("idle");
   const [queuedPhotos, setQueuedPhotos] = useState<File[]>([]);
   const [queueIndex, setQueueIndex] = useState(0);
   const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
@@ -511,7 +509,10 @@ export default function SubmitPage({
     setDetailsEntryMode("manual");
     setStatus("Enter the item details below, then submit them for review.");
     requestAnimationFrame(() => {
-      detailsCard.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      detailsCard.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
       detailsCard.current?.querySelector<HTMLInputElement>("input")?.focus();
     });
   }
@@ -847,16 +848,16 @@ export default function SubmitPage({
         setStatus("Saving the item details…");
       }
 
-      const configurableData = Object.fromEntries(
-        customCollectionFields(collection).map((field) => [
-          field.key,
-          customData[field.key] || "",
-        ]),
+      const data = Object.fromEntries(
+        configuredCaptureFields(collection)
+          .filter((field) => field.key !== "quantity" && field.key !== "unit")
+          .map((field) => [
+            field.key,
+            commercialCaptureKeys.has(field.key)
+              ? commercialData[field.key as CommercialCaptureKey] || ""
+              : customData[field.key] || "",
+          ]),
       );
-      const data = {
-        ...configurableData,
-        ...commercialData,
-      };
       const confirmedKeywords = keywords
         .split(",")
         .map((item) => item.trim())
@@ -1344,9 +1345,13 @@ export default function SubmitPage({
                 </div>
               )}
               <MapView
-                latitude={mapLat}
-                longitude={mapLng}
-                zoom={point ? 18 : organization.map_zoom}
+                latitude={organization.center_lat}
+                longitude={organization.center_lng}
+                zoom={Math.min(16, organization.map_zoom)}
+                markerLatitude={mapLat}
+                markerLongitude={mapLng}
+                markerLabel="Photo location"
+                boundary={organization.boundary}
                 picker
                 compact
                 onPick={(lat, lng) => {
@@ -1508,23 +1513,27 @@ export default function SubmitPage({
               </label>
             </div>
 
-            {collection?.kind !== "place" && (
-              <fieldset className="inventory-capture-fields">
-                <legend>Inventory details</legend>
+            {!!configuredCaptureFields(collection).length && (
+              <fieldset className="inventory-capture-fields unified-capture-fields">
+                <legend>Item details</legend>
                 <p>
-                  AI fills what it can see. Review the values and complete only
-                  the details marked Required.
+                  AI fills what it can see. Review it and complete only the
+                  details marked Required.
                 </p>
-                {inventoryCaptureFields.map((field) => {
-                  const required = inventoryFieldRequired(
-                    collection,
-                    field.key,
+                {configuredCaptureFields(collection).map((field) => {
+                  const preset = inventoryCaptureFields.find(
+                    (item) => item.key === field.key,
                   );
+                  const value = commercialCaptureKeys.has(field.key)
+                    ? commercialData[field.key as CommercialCaptureKey] || ""
+                    : customData[field.key] || "";
                   return (
                     <label key={field.key}>
                       <span>
                         {field.label}
-                        <small>{required ? "Required" : "Optional"}</small>
+                        <small>
+                          {field.required ? "Required" : "Optional"}
+                        </small>
                       </span>
                       {field.key === "quantity" ? (
                         <input
@@ -1533,19 +1542,31 @@ export default function SubmitPage({
                           type="number"
                           min="0"
                           step="any"
-                          placeholder={field.placeholder}
-                          required={required}
+                          placeholder={preset?.placeholder}
+                          required={field.required}
                         />
                       ) : field.key === "unit" ? (
                         <input
                           value={unit}
                           onChange={(event) => setUnit(event.target.value)}
-                          placeholder={field.placeholder}
-                          required={required}
+                          placeholder={preset?.placeholder}
+                          required={field.required}
                         />
-                      ) : (
+                      ) : field.type === "boolean" ? (
                         <input
-                          value={commercialData[field.key]}
+                          checked={value === "true"}
+                          onChange={(event) =>
+                            setCustomData((current) => ({
+                              ...current,
+                              [field.key]: String(event.target.checked),
+                            }))
+                          }
+                          type="checkbox"
+                          required={field.required}
+                        />
+                      ) : commercialCaptureKeys.has(field.key) ? (
+                        <input
+                          value={value}
                           onChange={(event) =>
                             setCommercialData((current) => ({
                               ...current,
@@ -1553,8 +1574,20 @@ export default function SubmitPage({
                             }))
                           }
                           type={field.type}
-                          placeholder={field.placeholder}
-                          required={required}
+                          placeholder={preset?.placeholder}
+                          required={field.required}
+                        />
+                      ) : (
+                        <input
+                          value={value}
+                          onChange={(event) =>
+                            setCustomData((current) => ({
+                              ...current,
+                              [field.key]: event.target.value,
+                            }))
+                          }
+                          type={field.type}
+                          required={field.required}
                         />
                       )}
                     </label>
@@ -1577,37 +1610,6 @@ export default function SubmitPage({
                 </small>
               </span>
             </label>
-
-            {customCollectionFields(collection).map((field) => (
-              <label key={field.key}>
-                {field.label}
-                {field.type === "boolean" ? (
-                  <input
-                    checked={customData[field.key] === "true"}
-                    onChange={(event) =>
-                      setCustomData((current) => ({
-                        ...current,
-                        [field.key]: String(event.target.checked),
-                      }))
-                    }
-                    type="checkbox"
-                    required={field.required}
-                  />
-                ) : (
-                  <input
-                    value={customData[field.key] || ""}
-                    onChange={(event) =>
-                      setCustomData((current) => ({
-                        ...current,
-                        [field.key]: event.target.value,
-                      }))
-                    }
-                    type={field.type}
-                    required={field.required}
-                  />
-                )}
-              </label>
-            ))}
 
             {!!aiSuggestions?.warnings?.length && (
               <p className="ai-review-note">

@@ -7,10 +7,19 @@ Live site: <https://zhinii.github.io/lotkeeper/>
 ## Three access layers
 
 - **Public:** choose an organization, view its public items, search by text or photo, filter like a product catalog, and see matching pins on the map. Public visitors cannot change records.
-- **Employee:** sign in to add a photo and pin, update an existing item, record inventory use, and mark the item public or employee-only. GPS can come from photo EXIF, browser location or a manually adjusted map pin.
+- **Employee:** sign in to add a photo and pin, update an existing item, record inventory use, and mark the item public or employee-only. Mobile capture requires a valid live GPS fix before and after the camera opens. Desktop upload reads GPS and capture dates from the original image files, with manual map placement available when a file has no coordinates.
 - **Administrator:** create and assign employee logins, review submissions, edit every standard field, change quantities and coordinates, archive items, import inventory CSV files, map generic inventory pins, configure organizations, and review search activity. Organization owners and platform administrators can also permanently delete a deployment from its settings.
 
 Every captured item supports a name, description, quantity, unit, SKU or asset ID, named location, category, GPS coordinates, visibility, timestamps and the account that updated it. Additional organization-specific fields remain configurable.
+
+## Photo and GPS policy
+
+Material Pin intentionally uses different capture controls on mobile and desktop:
+
+- **Mobile phones and tablets:** there is no image-file input. Employees must first allow precise browser location, then use Material Pin's live camera preview. The camera remains disabled until a GPS fix accurate to 100 meters or better is available, and location is checked again when the shutter is pressed. The stored location source is `Live phone GPS`.
+- **Desktop and laptop computers:** employees may select one or many original image files. Material Pin reads each file's EXIF capture date and GPS coordinates and presents a crop, AI review and submission screen for each photo in sequence. Files without accessible GPS require manual map placement.
+
+Android can redact GPS metadata when a file is selected through its system photo picker. The mobile workflow therefore does not depend on image EXIF. Desktop photo dumps should use the original files copied from the camera or phone rather than screenshots, edited exports or messaging-app copies that may have stripped metadata.
 
 ## Search design
 

@@ -1127,6 +1127,16 @@ button:disabled {
   color: #fff;
   font-weight: 900;
 }
+.continue-photo-dump {
+  width: 100%;
+  margin-bottom: 10px;
+  padding: 16px;
+  color: #183d2d;
+  border: 2px solid #d5a900;
+  border-radius: 12px;
+  background: #ffcf24;
+  font-weight: 900;
+}
 .loading,
 .empty {
   padding: 50px;
@@ -4231,6 +4241,139 @@ body:has(.login-page) {
   gap: 14px;
 }
 
+.desktop-photo-dump {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.mobile-camera-flow {
+  display: grid;
+  gap: 14px;
+}
+
+.mobile-gps-gate {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  padding: 15px;
+  color: #563f0a;
+  border: 2px solid #e1ba34;
+  border-radius: 17px;
+  background: #fff8dc;
+}
+
+.mobile-gps-gate > span {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  place-items: center;
+  border-radius: 50%;
+  color: #fff;
+  background: #8c6900;
+  font-size: 20px;
+  font-weight: 900;
+}
+
+.mobile-gps-gate > div {
+  display: grid;
+  gap: 3px;
+}
+
+.mobile-gps-gate small {
+  color: #836300;
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: 0.11em;
+}
+
+.mobile-gps-gate strong {
+  font-size: 16px;
+}
+
+.mobile-gps-gate p {
+  margin: 0;
+  color: #6b624b;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.mobile-gps-gate > button {
+  grid-column: 1 / -1;
+  min-height: 49px;
+  color: #fff;
+  border: 0;
+  border-radius: 11px;
+  background: #765900;
+  font-weight: 900;
+}
+
+.mobile-gps-gate.ready {
+  color: #173e2c;
+  border-color: #7ab493;
+  background: #edf8f1;
+}
+
+.mobile-gps-gate.ready > span,
+.mobile-gps-gate.ready > button {
+  background: var(--public-green, #24704e);
+}
+
+.mobile-camera-choice.disabled {
+  color: #66716b;
+  border-color: #cbd2cd;
+  background: #e8ece9;
+  cursor: not-allowed;
+  opacity: 0.72;
+}
+
+.mobile-camera-choice {
+  width: 100%;
+  font: inherit;
+}
+
+.mobile-camera-choice > span {
+  font-size: 12px;
+  opacity: 0.8;
+}
+
+.live-camera-panel {
+  overflow: hidden;
+  border: 2px solid #173e2c;
+  border-radius: 19px;
+  background: #0b1711;
+}
+
+.live-camera-panel video {
+  display: block;
+  width: 100%;
+  max-height: 58dvh;
+  aspect-ratio: 3 / 4;
+  background: #07100b;
+  object-fit: cover;
+}
+
+.live-camera-panel > div {
+  display: grid;
+  grid-template-columns: 0.75fr 1.25fr;
+  gap: 9px;
+  padding: 11px;
+}
+
+.live-camera-panel button {
+  min-height: 50px;
+  color: #fff;
+  border: 1px solid #587064;
+  border-radius: 12px;
+  background: #21382f;
+  font-weight: 850;
+}
+
+.live-camera-panel button.camera-shutter {
+  color: #173e2c;
+  border-color: #ffcf24;
+  background: #ffcf24;
+}
+
 .capture-choice {
   position: relative;
   display: grid;
@@ -4330,6 +4473,16 @@ body:has(.login-page) {
   margin: 17px auto 0;
   text-align: center;
   font-size: 12px;
+}
+
+.capture-status {
+  min-height: 20px;
+  margin: 14px auto 0;
+  color: #654b00;
+  font-size: 12px;
+  font-weight: 750;
+  line-height: 1.45;
+  text-align: center;
 }
 
 .photo-preparing {
@@ -4486,6 +4639,11 @@ body:has(.login-page) {
   background: var(--public-green, #24704e);
   font-size: 14px;
   font-weight: 900;
+}
+
+.desktop-location-needed {
+  border-color: #b9c6bd;
+  background: #f3f6f3;
 }
 
 .review-map-card .map-view.compact {

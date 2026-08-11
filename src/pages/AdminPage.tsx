@@ -5,11 +5,7 @@ import OrganizationMapEditor, {
   type MapConfiguration,
 } from "../components/OrganizationMapEditor";
 import {
-  captureFieldLabel,
-  customCollectionFields,
-  inventoryDataCaptureFields,
-  inventoryFieldRequired,
-  inventoryFieldsForCollection,
+  configuredCaptureFields,
   normalizeCollections,
 } from "../lib/captureFields";
 import { materialDefaults } from "../lib/collections";
@@ -158,6 +154,7 @@ export default function AdminPage() {
     latitude: 36.9148,
     longitude: -111.4573,
   });
+  const [recordQuery, setRecordQuery] = useState("");
 
   useEffect(() => {
     const client = requireSupabase();
@@ -583,10 +580,8 @@ export default function AdminPage() {
       (collection) => collection.id === nextCollectionId,
     );
     const nextData: Record<string, unknown> = { ...item.data };
-    for (const field of inventoryDataCaptureFields) {
-      nextData[field.key] = String(form.get(field.key) || "").trim();
-    }
-    for (const field of customCollectionFields(configuredCollection || null)) {
+    for (const field of configuredCaptureFields(configuredCollection || null)) {
+      if (field.key === "quantity" || field.key === "unit") continue;
       nextData[field.key] =
         field.type === "boolean"
           ? form.get(field.key) === "on"
@@ -760,6 +755,65 @@ export default function AdminPage() {
   const reviewItems = reviewView === "pending" ? pending : resolved;
   const openAlerts = alerts.filter((item) => item.status === "open");
   const resolvedAlerts = alerts.filter((item) => item.status === "resolved");
+  const visibleRecords = records.filter((item) => {
+    const query = recordQuery.trim().toLowerCase();
+    if (!query) return true;
+    return [
+      item.name,
+      item.category,
+      item.description,
+      item.data.sku,
+      item.data.location_code,
+      item.data.manufacturer,
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase()
+      .includes(query);
+  });
+  const recordGroups = (selected?.collections || [])
+    .map((collection) => ({
+      collection,
+      categories: Object.entries(
+        visibleRecords
+          .filter((item) => item.collection_id === collection.id)
+          .reduce<Record<string, RecordItem[]>>((groups, item) => {
+            const category = item.category?.trim() || "Uncategorized";
+            (groups[category] ||= []).push(item);
+            return groups;
+          }, {}),
+      ).sort(([left], [right]) => left.localeCompare(right)),
+    }))
+    .filter((group) => group.categories.length);
+  const knownCollectionIds = new Set(
+    (selected?.collections || []).map((collection) => collection.id),
+  );
+  const unassignedRecords = visibleRecords.filter(
+    (item) => !knownCollectionIds.has(item.collection_id),
+  );
+  if (unassignedRecords.length) {
+    recordGroups.push({
+      collection: {
+        id: "unassigned",
+        name: "Other items",
+        icon: "?",
+        kind: "persistent",
+        publicVisible: false,
+        publicSubmit: false,
+        fields: [],
+      },
+      categories: Object.entries(
+        unassignedRecords.reduce<Record<string, RecordItem[]>>(
+          (groups, item) => {
+            const category = item.category?.trim() || "Uncategorized";
+            (groups[category] ||= []).push(item);
+            return groups;
+          },
+          {},
+        ),
+      ),
+    });
+  }
   return (
     <div className="admin-page">
       <header className="admin-header">
@@ -985,11 +1039,8 @@ export default function AdminPage() {
                 const reviewCollection = selected?.collections.find(
                   (collection) => collection.id === item.collection_id,
                 );
-                const inventoryFields = reviewCollection
-                  ? inventoryFieldsForCollection(reviewCollection)
-                  : [];
-                const inventoryKeys = new Set<string>(
-                  inventoryFields.map((field) => field.key),
+                const detailFields = configuredCaptureFields(
+                  reviewCollection || null,
                 );
                 return (
                   <article key={item.id}>
@@ -1013,9 +1064,14 @@ export default function AdminPage() {
                         <div className="empty">No new photo</div>
                       )}
                       <MapView
-                        latitude={item.latitude}
-                        longitude={item.longitude}
-                        zoom={18}
+                        latitude={selected?.center_lat ?? item.latitude}
+                        longitude={selected?.center_lng ?? item.longitude}
+                        zoom={Math.min(16, selected?.map_zoom ?? 15)}
+                        markerLatitude={item.latitude}
+                        markerLongitude={item.longitude}
+                        markerLabel={item.proposed.name || "Submitted item"}
+                        boundary={selected?.boundary}
+                        showMarker
                         compact
                       />
                     </div>
@@ -1088,7 +1144,7 @@ export default function AdminPage() {
                         <dt>Photo suggestions</dt>
                         <dd>{aiStatusLabel(item.ai_status)}</dd>
                       </div>
-                      {inventoryFields.map((field) => {
+                      {detailFields.map((field) => {
                         const value =
                           field.key === "quantity"
                             ? item.proposed.quantity
@@ -1099,13 +1155,7 @@ export default function AdminPage() {
                           <div key={field.key}>
                             <dt>
                               {field.label}
-                              {reviewCollection &&
-                              inventoryFieldRequired(
-                                reviewCollection,
-                                field.key,
-                              )
-                                ? " · required"
-                                : ""}
+                              {field.required ? " · required" : ""}
                             </dt>
                             <dd>
                               {value === "" || value == null
@@ -1123,19 +1173,6 @@ export default function AdminPage() {
                             : "Not provided"}
                         </dd>
                       </div>
-                      {Object.entries(item.proposed.data || {})
-                        .filter(
-                          ([key, value]) =>
-                            !inventoryKeys.has(key) &&
-                            value !== "" &&
-                            value != null,
-                        )
-                        .map(([key, value]) => (
-                          <div key={key}>
-                            <dt>{captureFieldLabel(key)}</dt>
-                            <dd>{String(value)}</dd>
-                          </div>
-                        ))}
                     </dl>
                     <div className="moderation-actions">
                       {item.status === "pending" ? (
@@ -1273,167 +1310,219 @@ export default function AdminPage() {
                 </form>
               </details>
             )}
-            <div className="record-admin-list">
-              {records.map((item) => (
-                <details className="record-edit-card" key={item.id}>
-                  <summary>
-                    <span>
-                      <small>
-                        {item.category || "Uncategorized"} ·{" "}
-                        {item.public_visible ? "Public" : "Employees only"}
-                      </small>
-                      <b>{item.name}</b>
-                      <small>
-                        {String(item.data.sku || "No SKU")} ·{" "}
-                        {String(
-                          item.data.location_code ||
-                            item.data.location ||
-                            "No named location",
-                        )}
-                      </small>
-                    </span>
-                    <output>
-                      {item.quantity !== null
-                        ? `${item.quantity} ${item.unit || ""}`
-                        : "Not counted"}
-                    </output>
-                    <i>Edit</i>
-                  </summary>
-                  <form
-                    className="record-edit-form"
-                    onSubmit={(event) => saveRecord(event, item)}
-                  >
-                    <label>
-                      Item name
-                      <input name="name" defaultValue={item.name} required />
-                    </label>
-                    <label>
-                      Item group
-                      <select
-                        name="collection_id"
-                        defaultValue={item.collection_id}
-                      >
-                        {selected?.collections.map((collection) => (
-                          <option key={collection.id} value={collection.id}>
-                            {collection.name}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    {inventoryDataCaptureFields.map((field) => (
-                      <label key={field.key}>
-                        {field.label}
-                        <input
-                          name={field.key}
-                          defaultValue={String(item.data[field.key] || "")}
-                          placeholder={field.placeholder}
-                        />
-                      </label>
-                    ))}
-                    <label>
-                      Category
-                      <input name="category" defaultValue={item.category} />
-                    </label>
-                    <label>
-                      Quantity
-                      <input
-                        name="quantity"
-                        type="number"
-                        step="any"
-                        min="0"
-                        defaultValue={item.quantity ?? ""}
-                      />
-                    </label>
-                    <label>
-                      Unit
-                      <input
-                        name="unit"
-                        defaultValue={item.unit || ""}
-                        placeholder="pieces, feet, cases"
-                      />
-                    </label>
-                    {customCollectionFields(
-                      selected?.collections.find(
-                        (collection) => collection.id === item.collection_id,
-                      ) || null,
-                    ).map((field) => (
-                      <label key={field.key}>
-                        {field.label}
-                        {field.type === "boolean" ? (
-                          <input
-                            name={field.key}
-                            type="checkbox"
-                            defaultChecked={Boolean(item.data[field.key])}
-                          />
-                        ) : (
-                          <input
-                            name={field.key}
-                            type={field.type}
-                            defaultValue={String(item.data[field.key] || "")}
-                          />
-                        )}
-                      </label>
-                    ))}
-                    <label>
-                      Latitude
-                      <input
-                        name="latitude"
-                        type="number"
-                        step="any"
-                        defaultValue={item.latitude}
-                        required
-                      />
-                    </label>
-                    <label>
-                      Longitude
-                      <input
-                        name="longitude"
-                        type="number"
-                        step="any"
-                        defaultValue={item.longitude}
-                        required
-                      />
-                    </label>
-                    <label className="wide-field">
-                      Description
-                      <textarea
-                        name="description"
-                        rows={4}
-                        defaultValue={item.description}
-                      />
-                    </label>
-                    <label className="visibility-choice wide-field">
-                      <input
-                        name="public_visible"
-                        type="checkbox"
-                        defaultChecked={item.public_visible}
-                      />
-                      <span>
-                        <b>Show on the public site</b>
-                        <small>
-                          Private items remain visible to assigned employees and
-                          administrators.
-                        </small>
-                      </span>
-                    </label>
-                    <div className="record-edit-actions wide-field">
-                      <button className="save-button">Save item</button>
-                      <button
-                        type="button"
-                        className="danger"
-                        onClick={() => archiveRecord(item)}
-                      >
-                        Archive item
-                      </button>
+            <div className="inventory-toolbar">
+              <label>
+                <span>Find an item</span>
+                <input
+                  type="search"
+                  value={recordQuery}
+                  onChange={(event) => setRecordQuery(event.target.value)}
+                  placeholder="Name, SKU, category or location"
+                />
+              </label>
+              <output>{visibleRecords.length} active items</output>
+            </div>
+            <div className="inventory-management">
+              {recordGroups.map(({ collection, categories }) => (
+                <section className="inventory-group" key={collection.id}>
+                  <header>
+                    <span>{collection.icon || collection.name.charAt(0)}</span>
+                    <div>
+                      <small>ITEM GROUP</small>
+                      <h2>{collection.name}</h2>
                     </div>
-                  </form>
-                </details>
+                    <output>
+                      {categories.reduce(
+                        (total, [, items]) => total + items.length,
+                        0,
+                      )}
+                    </output>
+                  </header>
+                  {categories.map(([category, items]) => (
+                    <details className="inventory-category" key={category} open>
+                      <summary>
+                        <b>{category}</b>
+                        <span>{items.length} items</span>
+                      </summary>
+                      <div className="record-admin-list">
+                        {items.map((item) => (
+                          <details className="record-edit-card" key={item.id}>
+                            <summary>
+                              <span>
+                                <small>
+                                  {item.category || "Uncategorized"} ·{" "}
+                                  {item.public_visible
+                                    ? "Public"
+                                    : "Employees only"}
+                                </small>
+                                <b>{item.name}</b>
+                                <small>
+                                  {String(item.data.sku || "No SKU")} ·{" "}
+                                  {String(
+                                    item.data.location_code ||
+                                      item.data.location ||
+                                      "No named location",
+                                  )}
+                                </small>
+                              </span>
+                              <output>
+                                {item.quantity !== null
+                                  ? `${item.quantity} ${item.unit || ""}`
+                                  : "Not counted"}
+                              </output>
+                              <i>Edit</i>
+                            </summary>
+                            <form
+                              className="record-edit-form"
+                              onSubmit={(event) => saveRecord(event, item)}
+                            >
+                              <label>
+                                Item name
+                                <input
+                                  name="name"
+                                  defaultValue={item.name}
+                                  required
+                                />
+                              </label>
+                              <label>
+                                Item group
+                                <select
+                                  name="collection_id"
+                                  defaultValue={item.collection_id}
+                                >
+                                  {selected?.collections.map((collection) => (
+                                    <option
+                                      key={collection.id}
+                                      value={collection.id}
+                                    >
+                                      {collection.name}
+                                    </option>
+                                  ))}
+                                </select>
+                              </label>
+                              <label>
+                                Category
+                                <input
+                                  name="category"
+                                  defaultValue={item.category}
+                                />
+                              </label>
+                              {configuredCaptureFields(collection).map(
+                                (field) => (
+                                  <label key={field.key}>
+                                    {field.label}
+                                    {field.key === "quantity" ? (
+                                      <input
+                                        name="quantity"
+                                        type="number"
+                                        step="any"
+                                        min="0"
+                                        defaultValue={item.quantity ?? ""}
+                                        required={field.required}
+                                      />
+                                    ) : field.key === "unit" ? (
+                                      <input
+                                        name="unit"
+                                        defaultValue={item.unit || ""}
+                                        required={field.required}
+                                      />
+                                    ) : field.type === "boolean" ? (
+                                      <input
+                                        name={field.key}
+                                        type="checkbox"
+                                        defaultChecked={Boolean(
+                                          item.data[field.key],
+                                        )}
+                                        required={field.required}
+                                      />
+                                    ) : (
+                                      <input
+                                        name={field.key}
+                                        type={field.type}
+                                        defaultValue={String(
+                                          item.data[field.key] || "",
+                                        )}
+                                        required={field.required}
+                                      />
+                                    )}
+                                  </label>
+                                ),
+                              )}
+                              <label>
+                                Latitude
+                                <input
+                                  name="latitude"
+                                  type="number"
+                                  step="any"
+                                  defaultValue={item.latitude}
+                                  required
+                                />
+                              </label>
+                              <label>
+                                Longitude
+                                <input
+                                  name="longitude"
+                                  type="number"
+                                  step="any"
+                                  defaultValue={item.longitude}
+                                  required
+                                />
+                              </label>
+                              <label className="wide-field">
+                                Description
+                                <textarea
+                                  name="description"
+                                  rows={4}
+                                  defaultValue={item.description}
+                                />
+                              </label>
+                              <label className="visibility-choice wide-field">
+                                <input
+                                  name="public_visible"
+                                  type="checkbox"
+                                  defaultChecked={item.public_visible}
+                                />
+                                <span>
+                                  <b>Show on the public site</b>
+                                  <small>
+                                    Private items remain visible to assigned
+                                    employees and administrators.
+                                  </small>
+                                </span>
+                              </label>
+                              <div className="record-edit-actions wide-field">
+                                <button className="save-button">
+                                  Save item
+                                </button>
+                                <button
+                                  type="button"
+                                  className="danger"
+                                  onClick={() => archiveRecord(item)}
+                                >
+                                  Archive item
+                                </button>
+                              </div>
+                            </form>
+                          </details>
+                        ))}
+                      </div>
+                    </details>
+                  ))}
+                </section>
               ))}
-              {!records.length && (
+              {!visibleRecords.length && (
                 <div className="admin-list-empty">
                   <span>▦</span>
-                  <h2>No approved items yet</h2>
-                  <p>Approve a submission to publish the first item.</p>
+                  <h2>
+                    {records.length
+                      ? "No matching items"
+                      : "No approved items yet"}
+                  </h2>
+                  <p>
+                    {records.length
+                      ? "Try a different name, SKU, category or location."
+                      : "Approve a submission to publish the first item."}
+                  </p>
                 </div>
               )}
             </div>
@@ -1648,10 +1737,11 @@ export default function AdminPage() {
                 </label>
                 <label className="catalog-guide-field panel">
                   <span>
-                    <b>Teach the photo search your organization’s language</b>
+                    <b>AI instructions for this organization</b>
                     <small>
-                      Describe the business, common items, preferred names,
-                      identifier formats and details the AI should not guess.
+                      Tell photo analysis which terms, labels and visible
+                      details matter. These instructions refine results but do
+                      not override what is actually in the photo.
                     </small>
                   </span>
                   <textarea
@@ -1661,6 +1751,28 @@ export default function AdminPage() {
                     maxLength={4000}
                     placeholder="Example: Steel service center. Use plate, sheet, angle, channel, beam, tube, offcut, alloy, thickness and heat number. Never guess a grade or measurement that is not visible."
                   />
+                  <div className="ai-instruction-shortcuts">
+                    {[
+                      "Use our preferred item names when they match the visible object.",
+                      "Read visible labels, part numbers and asset tags carefully.",
+                      "Describe visible material and condition, but do not guess.",
+                      "Leave IDs, dimensions and specifications blank unless clearly visible.",
+                    ].map((instruction) => (
+                      <button
+                        type="button"
+                        key={instruction}
+                        onClick={() =>
+                          setEditAiContext((current) =>
+                            [current.trim(), instruction]
+                              .filter(Boolean)
+                              .join("\n"),
+                          )
+                        }
+                      >
+                        + {instruction}
+                      </button>
+                    ))}
+                  </div>
                   <small>{editAiContext.length}/4000 characters</small>
                 </label>
                 <label className="access-setting panel">

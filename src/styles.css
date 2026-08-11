@@ -4353,11 +4353,57 @@ body:has(.login-page) {
   object-fit: cover;
 }
 
-.live-camera-panel > div {
+.live-camera-panel > .camera-actions {
   display: grid;
   grid-template-columns: 0.75fr 1.25fr;
   gap: 9px;
   padding: 11px;
+}
+
+.camera-gps-status {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  margin: 10px 10px 0;
+  padding: 12px;
+  color: #55420c;
+  border: 1px solid #dfbe42;
+  border-radius: 13px;
+  background: #fff8dc;
+}
+
+.camera-gps-status.ready {
+  color: #1b5137;
+  border-color: #75aa87;
+  background: #eaf6ed;
+}
+
+.camera-gps-status.blocked {
+  color: #6b342d;
+  border-color: #d4a29b;
+  background: #fff0ed;
+}
+
+.camera-gps-status > span {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border-radius: 50%;
+  background: #fff;
+  font-size: 18px;
+  font-weight: 900;
+}
+
+.camera-gps-status strong,
+.camera-gps-status small {
+  display: block;
+}
+
+.camera-gps-status small {
+  margin-top: 3px;
+  line-height: 1.35;
 }
 
 .live-camera-panel button {
@@ -4373,6 +4419,23 @@ body:has(.login-page) {
   color: #173e2c;
   border-color: #ffcf24;
   background: #ffcf24;
+}
+
+.live-camera-panel button.camera-shutter:disabled {
+  color: #dbe4df;
+  border-color: #52655b;
+  background: #34483e;
+  opacity: 1;
+}
+
+.live-camera-panel .camera-gps-status button {
+  min-height: 40px;
+  padding: 8px 10px;
+  color: #522c27;
+  border-color: #b97f77;
+  border-radius: 9px;
+  background: #fff;
+  font-size: 12px;
 }
 
 .capture-choice {
@@ -4953,6 +5016,15 @@ body:has(.login-page) {
   }
 
   .ai-choice-actions button {
+    width: 100%;
+  }
+
+  .camera-gps-status {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .live-camera-panel .camera-gps-status button {
+    grid-column: 1 / -1;
     width: 100%;
   }
 

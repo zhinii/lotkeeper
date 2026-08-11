@@ -149,6 +149,11 @@ create index submissions_org_status on public.submissions(organization_id,status
 create index ai_usage_org_created on public.ai_usage_events(organization_id,created_at desc);
 create index searches_org_created on public.search_events(organization_id,created_at desc);
 create index alerts_org_status on public.alerts(organization_id,status,created_at desc);
+create index records_org_status_updated on public.records(organization_id,status,updated_at desc);
+create index records_org_updated on public.records(organization_id,updated_at desc);
+create index submissions_org_submitted on public.submissions(organization_id,submitted_at desc);
+create index record_private_org_record on public.record_private_data(organization_id,record_id);
+create index alerts_org_created on public.alerts(organization_id,created_at desc);
 
 alter table public.organizations enable row level security;
 alter table public.platform_admins enable row level security;

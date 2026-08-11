@@ -46,6 +46,17 @@ test("schema separates public and private record data and enables RLS", async ()
   assert.match(schema, /create or replace function public\.approve_submission/);
 });
 
+test("database indexes match organization workspace query ordering", async () => {
+  const migration = await read(
+    "supabase/migrations/20260811_query_performance.sql",
+  );
+  assert.match(migration, /records_org_status_updated/);
+  assert.match(migration, /records_org_updated/);
+  assert.match(migration, /submissions_org_submitted/);
+  assert.match(migration, /record_private_org_record/);
+  assert.match(migration, /alerts_org_created/);
+});
+
 test("public submission workflow requires mapped evidence and moderation", async () => {
   const submit = await read("src/pages/SubmitPage.tsx");
   const admin = await read("src/pages/AdminPage.tsx");
@@ -187,7 +198,7 @@ test("employee photo review uses consistent inventory fields and visibility", as
   const captureFields = await read("src/lib/captureFields.ts");
   const collections = await read("src/components/CollectionEditor.tsx");
   assert.match(submit, /Item name/);
-  assert.match(submit, /Enable GPS, then take a photo/);
+  assert.match(submit, /Open the camera and take a photo/);
   assert.match(submit, /Filled from photo/);
   assert.match(submit, /Filled from photo/);
   assert.match(submit, /Date of capture/);
@@ -216,7 +227,7 @@ test("submitters choose optional AI after photo and EXIF preparation", async () 
   const edge = await read("supabase/functions/enrich-submission/index.ts");
   assert.match(submit, /SUBMITTED/);
   assert.match(submit, /You\s+do\s+not\s+need\s+to\s+submit\s+it\s+again/);
-  assert.match(submit, /Take a new photo/);
+  assert.match(submit, /Open live camera/);
   assert.match(submit, /Choose photos/);
   assert.match(submit, /setStep\("review"\)/);
   assert.match(submit, /image_data_url/);
@@ -248,18 +259,21 @@ test("submitters choose optional AI after photo and EXIF preparation", async () 
   assert.match(submit, /metadata\?\.GPSLongitude/);
   assert.match(submit, /function exifCoordinate/);
   assert.match(submit, /function isMobileCaptureDevice/);
-  assert.match(submit, /Enable precise location/);
-  assert.match(submit, /disabled=\{!mobileCapturePoint\}/);
+  assert.match(submit, /Camera and precise location start together/);
   assert.match(submit, /navigator\.mediaDevices\.getUserMedia/);
+  assert.match(submit, /navigator\.geolocation\.watchPosition/);
+  assert.match(
+    submit,
+    /enableHighAccuracy: true, timeout: 20000, maximumAge: 0/,
+  );
   assert.match(submit, /facingMode: \{ ideal: "environment" \}/);
   assert.match(submit, /<video ref=\{cameraVideo\}/);
   assert.match(submit, /captureMobilePhoto/);
   assert.doesNotMatch(submit, /capture="environment"/);
-  assert.match(submit, /const locationTask = browserLocation\(\)/);
-  assert.match(submit, /const captureLocation = await locationTask/);
-  assert.match(submit, /MOBILE_MAX_ACCURACY_METERS = 100/);
+  assert.match(submit, /const captureLocation = mobileBestPoint\.current/);
+  assert.match(submit, /MOBILE_REQUIRED_ACCURACY_METERS = 10/);
   assert.match(submit, /usableMobileGps/);
-  assert.match(submit, /The photo was not accepted because a precise GPS fix/);
+  assert.match(submit, /Waiting for precise GPS/);
   assert.match(submit, /multiple=\{!recordId\}/);
   assert.match(submit, /selectDesktopPhotos/);
   assert.match(submit, /continuePhotoDump/);
@@ -268,6 +282,7 @@ test("submitters choose optional AI after photo and EXIF preparation", async () 
   assert.match(styles, /\.location-needed/);
   assert.match(styles, /\.mobile-gps-gate/);
   assert.match(styles, /\.live-camera-panel/);
+  assert.match(styles, /\.camera-gps-status/);
   assert.match(styles, /\.desktop-photo-dump/);
   assert.match(submit, /safeWarnings/);
   const cropStart = submit.indexOf("async function confirmCrop");
@@ -316,6 +331,6 @@ test("Material Pin is installable while retaining the GitHub Pages website", asy
   assert.match(manifest, /"name": "Material Pin"/);
   assert.match(manifest, /icon-192\.png/);
   assert.match(manifest, /icon-512\.png/);
-  assert.match(worker, /material-pin-shell-v9/);
+  assert.match(worker, /material-pin-shell-v10/);
   assert.match(worker, /request\.mode === "navigate"/);
 });

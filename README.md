@@ -19,7 +19,7 @@ Material Pin intentionally uses different capture controls on mobile and desktop
 - **Mobile phones and tablets:** there is no image-file input. Employees must first allow precise browser location, then use Material Pin's live camera preview. The camera remains disabled until a GPS fix accurate to 100 meters or better is available, and location is checked again when the shutter is pressed. The stored location source is `Live phone GPS`.
 - **Desktop and laptop computers:** employees may select one or many original image files. Material Pin reads each file's EXIF capture date and GPS coordinates and presents a crop, AI review and submission screen for each photo in sequence. Files without accessible GPS require manual map placement.
 
-Android can redact GPS metadata when a file is selected through its system photo picker. The mobile workflow therefore does not depend on image EXIF. Desktop photo dumps should use the original files copied from the camera or phone rather than screenshots, edited exports or messaging-app copies that may have stripped metadata.
+Android can redact GPS metadata when a file is selected through its system photo picker. The mobile workflow therefore does not depend on image EXIF. Opening the live camera starts continuous high-accuracy phone GPS automatically; the shutter unlocks only after the browser reports accuracy within 10 meters and the location continues refining until capture. Actual accuracy still depends on the phone, location permission, satellite visibility and surrounding buildings. Desktop photo dumps should use the original files copied from the camera or phone rather than screenshots, edited exports or messaging-app copies that may have stripped metadata.
 
 ## Search design
 

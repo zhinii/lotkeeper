@@ -32,6 +32,8 @@ type Point = {
   source: LocationSource;
 };
 
+type PrecisePoint = Point & { accuracy: number };
+
 type SubmissionStep = "photo" | "crop" | "review" | "complete";
 type AnalysisState = "idle" | "analyzing" | "complete" | "unavailable";
 
@@ -46,6 +48,8 @@ type PreparedPhoto = {
   originalBytes: number;
   uploadBytes: number;
 };
+
+const MOBILE_MAX_ACCURACY_METERS = 100;
 
 function localDateTime(isoDate: string | null) {
   if (!isoDate) return "";
@@ -204,6 +208,30 @@ function fileSize(bytes: number) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+function isMobileCaptureDevice() {
+  if (typeof navigator === "undefined") return false;
+  const mobileUserAgent = /Android|iPhone|iPad|iPod|IEMobile|Opera Mini/i.test(
+    navigator.userAgent,
+  );
+  const touchIPad =
+    /Macintosh/i.test(navigator.userAgent) && navigator.maxTouchPoints > 1;
+  return mobileUserAgent || touchIPad;
+}
+
+function locationSourceLabel(source: LocationSource) {
+  if (source === "photo_exif") return "Photo EXIF";
+  if (source === "browser_gps") return "Live phone GPS";
+  return "Manual pin";
+}
+
+function usableMobileGps(point: Point | null): point is PrecisePoint {
+  return Boolean(
+    point &&
+      point.accuracy !== null &&
+      point.accuracy <= MOBILE_MAX_ACCURACY_METERS,
+  );
+}
+
 function CameraIcon() {
   return (
     <svg viewBox="0 0 48 48" aria-hidden="true">
@@ -252,7 +280,15 @@ export default function SubmitPage({
   const [aiSuggestions, setAiSuggestions] = useState<
     Submission["ai_suggestions"] | null
   >(null);
+  const [mobileDevice] = useState(isMobileCaptureDevice);
+  const [mobileCapturePoint, setMobileCapturePoint] = useState<Point | null>(
+    null,
+  );
+  const [queuedPhotos, setQueuedPhotos] = useState<File[]>([]);
+  const [queueIndex, setQueueIndex] = useState(0);
+  const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
   const metadataPromise = useRef<Promise<Point | null> | null>(null);
+  const cameraVideo = useRef<HTMLVideoElement>(null);
 
   useEffect(() => {
     (async () => {
@@ -350,6 +386,20 @@ export default function SubmitPage({
     return () => URL.revokeObjectURL(url);
   }, [photo]);
 
+  useEffect(() => {
+    const video = cameraVideo.current;
+    if (!video || !cameraStream) return;
+    video.srcObject = cameraStream;
+    void video.play().catch(() => undefined);
+  }, [cameraStream]);
+
+  useEffect(
+    () => () => {
+      cameraStream?.getTracks().forEach((track) => track.stop());
+    },
+    [cameraStream],
+  );
+
   const collections = useMemo(
     () => organization?.collections || [],
     [organization],
@@ -430,11 +480,10 @@ export default function SubmitPage({
     }
   }
 
-  async function readPhotoLocation(file: File) {
-    // Android may give browsers a privacy-redacted copy of a selected photo.
-    // Start phone GPS immediately so location is still captured when EXIF is
-    // removed by the system photo picker.
-    const currentLocation = browserLocation();
+  async function readPhotoLocation(
+    file: File,
+    fallbackLocation: Promise<Point | null>,
+  ) {
     const [coordinates, metadata] = await Promise.all([
       readGps(file).catch(() => null),
       readExif(file, [
@@ -476,12 +525,15 @@ export default function SubmitPage({
       setPoint(exifPoint);
       return exifPoint;
     }
-    const current = await currentLocation;
+    const current = await fallbackLocation;
     if (current) setPoint(current);
     return current;
   }
 
-  function selectPhoto(file: File | null) {
+  function selectPhoto(
+    file: File | null,
+    fallbackLocation: Promise<Point | null> = Promise.resolve(null),
+  ) {
     if (!file || !organization) return;
     setSourcePhoto(file);
     setCrop(defaultCrop);
@@ -494,8 +546,107 @@ export default function SubmitPage({
     setAnalysisState("idle");
     setPreparing(false);
     setStatus("Crop the photo so the item is clear.");
-    metadataPromise.current = readPhotoLocation(file);
+    metadataPromise.current = readPhotoLocation(file, fallbackLocation);
     setStep("crop");
+  }
+
+  async function enableMobileCamera() {
+    setStatus("Getting a GPS fix before opening the camera…");
+    const current = await browserLocation();
+    if (!usableMobileGps(current)) {
+      setMobileCapturePoint(null);
+      setStatus(
+        current?.accuracy
+          ? `GPS is only accurate to approximately ±${Math.round(current.accuracy)} m. Enable precise location or move where the phone has a clearer GPS signal, then try again.`
+          : "Location is required before the camera can open. Allow precise location for this site, then try again.",
+      );
+      return;
+    }
+    setMobileCapturePoint(current);
+    setStatus(
+      `GPS ready (approximately ±${Math.round(current.accuracy || 0)} m). You can take the photo now.`,
+    );
+  }
+
+  function closeMobileCamera() {
+    cameraStream?.getTracks().forEach((track) => track.stop());
+    setCameraStream(null);
+  }
+
+  async function openMobileCamera() {
+    if (!mobileCapturePoint) {
+      setStatus("Enable GPS before opening the camera.");
+      return;
+    }
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setStatus(
+        "This browser cannot open a live camera. Use a current mobile browser.",
+      );
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: "environment" } },
+        audio: false,
+      });
+      setCameraStream(stream);
+      setStatus("Camera ready. Frame the item and tap Take photo.");
+    } catch {
+      setStatus(
+        "Camera access is blocked. Allow camera access for this site, then try again.",
+      );
+    }
+  }
+
+  async function captureMobilePhoto() {
+    const video = cameraVideo.current;
+    if (!video || video.videoWidth < 1 || video.videoHeight < 1) {
+      setStatus("The camera is still starting. Wait a moment and try again.");
+      return;
+    }
+    setStatus("Capturing the photo and confirming GPS…");
+    const locationTask = browserLocation();
+    const canvas = document.createElement("canvas");
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const context = canvas.getContext("2d");
+    if (!context) {
+      setStatus("This browser could not capture the camera image.");
+      return;
+    }
+    context.drawImage(video, 0, 0, canvas.width, canvas.height);
+    const blob = await new Promise<Blob | null>((resolve) =>
+      canvas.toBlob(resolve, "image/jpeg", 0.92),
+    );
+    const captureLocation = await locationTask;
+    if (!usableMobileGps(captureLocation)) {
+      closeMobileCamera();
+      setMobileCapturePoint(null);
+      setStatus(
+        "The photo was not accepted because a precise GPS fix was no longer available. Enable precise location and take it again.",
+      );
+      return;
+    }
+    if (!blob) {
+      setStatus("The camera image could not be saved. Try again.");
+      return;
+    }
+    const capturedAt = Date.now();
+    const file = new File([blob], `material-pin-${capturedAt}.jpg`, {
+      type: "image/jpeg",
+      lastModified: capturedAt,
+    });
+    setMobileCapturePoint(captureLocation);
+    closeMobileCamera();
+    selectPhoto(file, Promise.resolve(captureLocation));
+  }
+
+  function selectDesktopPhotos(files: FileList | null) {
+    const selected = Array.from(files || []);
+    if (!selected.length) return;
+    setQueuedPhotos(selected);
+    setQueueIndex(0);
+    selectPhoto(selected[0], Promise.resolve(recordId && point ? point : null));
   }
 
   async function confirmCrop() {
@@ -539,7 +690,9 @@ export default function SubmitPage({
         ? mapped.source === "photo_exif"
           ? "Photo location found. Review the pin before submitting."
           : "Current location captured. Review the pin before submitting."
-        : "Your phone did not share a location. Tap Use phone location, or place the pin on the map.",
+        : mobileDevice
+          ? "A live GPS location is required. Enable phone location or place the pin on the map."
+          : "This file did not contain accessible GPS coordinates. Place the pin on the map before submitting.",
     );
     setPreparing(false);
     setStep("review");
@@ -564,6 +717,23 @@ export default function SubmitPage({
     if (!recordId || !target) return;
     setAnalysisState("idle");
     setStep("review");
+  }
+
+  function continuePhotoDump() {
+    const nextIndex = queueIndex + 1;
+    const nextPhoto = queuedPhotos[nextIndex];
+    if (!nextPhoto) return;
+    setQueueIndex(nextIndex);
+    setName("");
+    setDescription("");
+    setCategory("");
+    setKeywords("");
+    setQuantity("1");
+    setUnit("");
+    setCommercialData(emptyCommercialCaptureData());
+    setCustomData({});
+    setPublicVisible(true);
+    selectPhoto(nextPhoto);
   }
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
@@ -697,6 +867,7 @@ export default function SubmitPage({
   const mapLng = point?.lng ?? organization.center_lng;
   const displayPhoto =
     preview || (target?.photo_path ? publicPhoto(target.photo_path) : "");
+  const photoDumpRemaining = Math.max(0, queuedPhotos.length - queueIndex - 1);
 
   if (step === "complete")
     return (
@@ -712,7 +883,12 @@ export default function SubmitPage({
             <span className="submitted-check" aria-hidden="true">
               ✓
             </span>
-            <small>SUBMITTED</small>
+            <small>
+              SUBMITTED
+              {queuedPhotos.length > 1
+                ? ` · PHOTO ${queueIndex + 1} OF ${queuedPhotos.length}`
+                : ""}
+            </small>
             <h1>Your photo is in review</h1>
             <p>
               An administrator will verify it before it appears publicly. You do
@@ -736,8 +912,19 @@ export default function SubmitPage({
                     : "Recorded"}
                 </dd>
               </div>
+              <div>
+                <dt>Location source</dt>
+                <dd>
+                  {point ? locationSourceLabel(point.source) : "Recorded"}
+                </dd>
+              </div>
             </dl>
           </section>
+          {photoDumpRemaining > 0 && (
+            <button className="continue-photo-dump" onClick={continuePhotoDump}>
+              Review next photo ({photoDumpRemaining} remaining)
+            </button>
+          )}
           <button
             className="return-to-place"
             onClick={() => navigate(`org/${organization.slug}`)}
@@ -769,7 +956,12 @@ export default function SubmitPage({
             <i>3</i>
           </div>
           <section className="capture-intro">
-            <small>FOCUS THE PHOTO</small>
+            <small>
+              FOCUS THE PHOTO
+              {queuedPhotos.length > 1
+                ? ` · ${queueIndex + 1} OF ${queuedPhotos.length}`
+                : ""}
+            </small>
             <h1>Crop to the item</h1>
             <p>
               Zoom and reposition the photo so the item you are adding is clear.
@@ -827,11 +1019,16 @@ export default function SubmitPage({
           <section className="capture-intro">
             <small>{recordId ? "UPDATE AN ENTRY" : "ADD TO THE MAP"}</small>
             <h1>
-              {recordId ? "Start with a new photo" : "First, take a photo"}
+              {recordId
+                ? "Start with a new photo"
+                : mobileDevice
+                  ? "Enable GPS, then take a photo"
+                  : "Choose photos to add"}
             </h1>
             <p>
-              The photo is the starting point. Material Pin will read its date
-              and location, then prepare details for you to review.
+              {mobileDevice
+                ? "Material Pin requires a live location before opening the camera, then locks that location to the new photo."
+                : "Choose one or many original image files. Material Pin reads each photo's date and embedded GPS, then walks you through them one at a time."}
             </p>
           </section>
 
@@ -860,35 +1057,93 @@ export default function SubmitPage({
                   <span>Current photo</span>
                 </div>
               )}
-              <div className="capture-actions">
-                <label className="capture-choice primary">
-                  <input
-                    type="file"
-                    accept="image/*"
-                    capture="environment"
-                    onChange={(event) =>
-                      selectPhoto(event.target.files?.[0] || null)
-                    }
-                  />
-                  <CameraIcon />
-                  <strong>Take a photo</strong>
-                  <small>Open the camera</small>
-                </label>
-                <label className="capture-choice">
-                  <input
-                    type="file"
-                    accept="image/*"
-                    onChange={(event) =>
-                      selectPhoto(event.target.files?.[0] || null)
-                    }
-                  />
-                  <span className="upload-icon" aria-hidden="true">
-                    ↑
-                  </span>
-                  <strong>Choose a photo</strong>
-                  <small>Use one already on this device</small>
-                </label>
-              </div>
+              {mobileDevice ? (
+                <div className="mobile-camera-flow">
+                  <section
+                    className={`mobile-gps-gate ${mobileCapturePoint ? "ready" : ""}`}
+                  >
+                    <span aria-hidden="true">
+                      {mobileCapturePoint ? "✓" : "1"}
+                    </span>
+                    <div>
+                      <small>STEP 1</small>
+                      <strong>
+                        {mobileCapturePoint
+                          ? "GPS is ready"
+                          : "Enable precise location"}
+                      </strong>
+                      <p>
+                        {mobileCapturePoint
+                          ? `${mobileCapturePoint.lat.toFixed(6)}, ${mobileCapturePoint.lng.toFixed(6)} · approximately ±${Math.round(mobileCapturePoint.accuracy || 0)} m`
+                          : "The camera stays locked until a valid location is captured."}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => void enableMobileCamera()}
+                    >
+                      {mobileCapturePoint ? "Refresh GPS" : "Enable GPS"}
+                    </button>
+                  </section>
+                  {cameraStream ? (
+                    <section className="live-camera-panel">
+                      <video ref={cameraVideo} autoPlay muted playsInline />
+                      <div>
+                        <button type="button" onClick={closeMobileCamera}>
+                          Close camera
+                        </button>
+                        <button
+                          type="button"
+                          className="camera-shutter"
+                          onClick={() => void captureMobilePhoto()}
+                        >
+                          Take photo
+                        </button>
+                      </div>
+                    </section>
+                  ) : (
+                    <button
+                      type="button"
+                      className={`capture-choice primary mobile-camera-choice ${mobileCapturePoint ? "" : "disabled"}`}
+                      disabled={!mobileCapturePoint}
+                      onClick={() => void openMobileCamera()}
+                    >
+                      <CameraIcon />
+                      <small>STEP 2</small>
+                      <strong>Open live camera</strong>
+                      <span>
+                        {mobileCapturePoint
+                          ? "Take a new photo"
+                          : "Enable GPS first"}
+                      </span>
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <div className="capture-actions desktop-photo-dump">
+                  <label className="capture-choice primary">
+                    <input
+                      type="file"
+                      accept="image/*"
+                      multiple={!recordId}
+                      onChange={(event) =>
+                        selectDesktopPhotos(event.target.files)
+                      }
+                    />
+                    <span className="upload-icon" aria-hidden="true">
+                      ↑
+                    </span>
+                    <strong>
+                      {recordId ? "Choose a photo" : "Choose photos"}
+                    </strong>
+                    <small>
+                      {recordId
+                        ? "Use the original image file"
+                        : "Select one or many original files"}
+                    </small>
+                  </label>
+                </div>
+              )}
               {recordId && target && (
                 <button
                   className="review-without-photo"
@@ -899,6 +1154,9 @@ export default function SubmitPage({
               )}
             </section>
           )}
+          <p className="capture-status" aria-live="polite">
+            {status}
+          </p>
           <p className="capture-privacy">
             Your signed-in employee account and every inventory change are
             recorded.
@@ -927,7 +1185,12 @@ export default function SubmitPage({
           <b>3</b>
         </div>
         <div className="review-heading">
-          <small>REVIEW BEFORE SENDING</small>
+          <small>
+            REVIEW BEFORE SENDING
+            {queuedPhotos.length > 1
+              ? ` · ${queueIndex + 1} OF ${queuedPhotos.length}`
+              : ""}
+          </small>
           <h1>Check what Material Pin found</h1>
           <p>
             Correct anything that is not right, confirm the pin, then submit.
@@ -965,24 +1228,36 @@ export default function SubmitPage({
                       : "Location required"}
                   </strong>
                 </div>
-                {point && (
+                {point && mobileDevice && (
                   <button type="button" onClick={locate}>
                     Update from phone
                   </button>
                 )}
               </div>
-              {!point && (
+              {!point && mobileDevice && (
                 <div className="location-needed">
                   <div>
                     <strong>Use the phone's current location</strong>
                     <span>
-                      Android may hide a photo's saved GPS when it is selected.
+                      A precise live GPS fix is required for mobile camera
+                      submissions.
                     </span>
                   </div>
                   <button type="button" onClick={locate}>
-                    Use phone location
+                    Try phone GPS again
                   </button>
                   <small>Or tap the map to place the pin yourself.</small>
+                </div>
+              )}
+              {!point && !mobileDevice && (
+                <div className="location-needed desktop-location-needed">
+                  <div>
+                    <strong>No embedded GPS was found</strong>
+                    <span>
+                      Use the original image file when possible. Otherwise tap
+                      the map to place this photo.
+                    </span>
+                  </div>
                 </div>
               )}
               <MapView
@@ -997,7 +1272,10 @@ export default function SubmitPage({
                 }}
               />
               <div className="coordinate-readout">
-                <span>GPS coordinates</span>
+                <span>
+                  GPS coordinates
+                  {point ? ` · ${locationSourceLabel(point.source)}` : ""}
+                </span>
                 <code>
                   {point
                     ? `${point.lat.toFixed(6)}, ${point.lng.toFixed(6)}`

@@ -1,4 +1,4 @@
-const CACHE = "material-pin-shell-v7";
+const CACHE = "material-pin-shell-v8";
 const base = new URL("./", self.location.href);
 const shell = [
   base.href,
@@ -40,7 +40,11 @@ self.addEventListener("activate", (event) => {
   event.waitUntil(
     caches
       .keys()
-      .then((keys) => Promise.all(keys.filter((key) => key !== CACHE).map((key) => caches.delete(key)))),
+      .then((keys) =>
+        Promise.all(
+          keys.filter((key) => key !== CACHE).map((key) => caches.delete(key)),
+        ),
+      ),
   );
   self.clients.claim();
 });
@@ -58,7 +62,11 @@ self.addEventListener("fetch", (event) => {
           caches.open(CACHE).then((cache) => cache.put(request, copy));
           return network;
         })
-        .catch(async () => (await caches.match(request)) || caches.match(new URL("index.html", base))),
+        .catch(
+          async () =>
+            (await caches.match(request)) ||
+            caches.match(new URL("index.html", base)),
+        ),
     );
     return;
   }

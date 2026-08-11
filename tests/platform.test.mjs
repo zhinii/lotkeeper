@@ -222,6 +222,9 @@ test("employee and manager use one configurable item detail model", async () => 
   assert.doesNotMatch(collections, /Last verified/);
   assert.match(manager, /inventory-management/);
   assert.match(manager, /inventory-category/);
+  assert.match(manager, /Choose an item group/);
+  assert.match(manager, /Choose a category/);
+  assert.match(manager, /!!recordCollection && !!recordCategory/);
   assert.match(manager, /AI instructions for this organization/);
   assert.match(submit, /without a new photo/);
 });
@@ -230,6 +233,7 @@ test("capture and every review card show a site-context location pin", async () 
   const submit = await read("src/pages/SubmitPage.tsx");
   const manager = await read("src/pages/AdminPage.tsx");
   const map = await read("src/components/MapView.tsx");
+  const styles = await read("src/styles.css");
   assert.match(submit, /markerLatitude={mapLat}/);
   assert.match(submit, /boundary={organization\.boundary}/);
   assert.match(manager, /markerLatitude={item\.latitude}/);
@@ -237,6 +241,14 @@ test("capture and every review card show a site-context location pin", async () 
   assert.match(manager, /showMarker/);
   assert.match(map, /location-pin/);
   assert.match(map, /requestAnimationFrame/);
+  assert.match(
+    styles,
+    /\.directory-page \.map-pin \{[\s\S]*?position: absolute/,
+  );
+  assert.doesNotMatch(
+    styles,
+    /\.directory-page \.map-pin \{[\s\S]{0,350}?position: relative/,
+  );
 });
 
 test("submitters choose optional AI after photo and EXIF preparation", async () => {
@@ -350,6 +362,6 @@ test("Material Pin is installable while retaining the GitHub Pages website", asy
   assert.match(manifest, /"name": "Material Pin"/);
   assert.match(manifest, /icon-192\.png/);
   assert.match(manifest, /icon-512\.png/);
-  assert.match(worker, /material-pin-shell-v11/);
+  assert.match(worker, /material-pin-shell-v12/);
   assert.match(worker, /request\.mode === "navigate"/);
 });

@@ -129,6 +129,9 @@ test("boundary drawing uses the current map tool and shows every point", async (
   assert.match(map, /Number\.isFinite\(numericLatitude\)/);
   assert.match(map, /recordLatitude < -90/);
   assert.match(map, /boundaryEditor \? control\?\.disable\(\)/);
+  assert.match(map, /new ResizeObserver\(resizeMap\)/);
+  assert.match(map, /resizeObserver\?\.observe\(mapHost\)/);
+  assert.match(map, /window\.removeEventListener\("resize", resizeMap\)/);
   assert.match(editor, /Boundary drawing is active/);
   assert.match(editor, /map is locked while drawing/);
   assert.match(editor, /Add at least 3 points to form an area/);
@@ -362,6 +365,6 @@ test("Material Pin is installable while retaining the GitHub Pages website", asy
   assert.match(manifest, /"name": "Material Pin"/);
   assert.match(manifest, /icon-192\.png/);
   assert.match(manifest, /icon-512\.png/);
-  assert.match(worker, /material-pin-shell-v12/);
+  assert.match(worker, /material-pin-shell-v13/);
   assert.match(worker, /request\.mode === "navigate"/);
 });

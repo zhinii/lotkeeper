@@ -100,8 +100,17 @@ export default function MapView({
 
   useEffect(() => {
     if (!host.current || !window.maplibregl) return;
+    const mapHost = host.current;
+    let resizeFrame: number | null = null;
+    const resizeMap = () => {
+      if (resizeFrame !== null) cancelAnimationFrame(resizeFrame);
+      resizeFrame = requestAnimationFrame(() => {
+        resizeFrame = null;
+        map.current?.resize();
+      });
+    };
     map.current = new window.maplibregl.Map({
-      container: host.current,
+      container: mapHost,
       center: [safeLongitude, safeLatitude],
       zoom: safeZoom,
       style: {
@@ -159,11 +168,21 @@ export default function MapView({
         Math.round(map.current.getZoom()),
       );
     });
-    map.current.once("load", () => {
-      map.current?.resize();
-      requestAnimationFrame(() => map.current?.resize());
-    });
-    return () => map.current?.remove();
+    const resizeObserver =
+      typeof ResizeObserver === "undefined"
+        ? null
+        : new ResizeObserver(resizeMap);
+    resizeObserver?.observe(mapHost);
+    window.addEventListener("resize", resizeMap);
+    map.current.once("load", resizeMap);
+    resizeMap();
+    return () => {
+      resizeObserver?.disconnect();
+      window.removeEventListener("resize", resizeMap);
+      if (resizeFrame !== null) cancelAnimationFrame(resizeFrame);
+      map.current?.remove();
+      map.current = null;
+    };
   }, []);
 
   useEffect(() => {

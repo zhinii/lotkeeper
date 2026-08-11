@@ -431,6 +431,10 @@ export default function SubmitPage({
   }
 
   async function readPhotoLocation(file: File) {
+    // Android may give browsers a privacy-redacted copy of a selected photo.
+    // Start phone GPS immediately so location is still captured when EXIF is
+    // removed by the system photo picker.
+    const currentLocation = browserLocation();
     const [coordinates, metadata] = await Promise.all([
       readGps(file).catch(() => null),
       readExif(file, [
@@ -472,7 +476,7 @@ export default function SubmitPage({
       setPoint(exifPoint);
       return exifPoint;
     }
-    const current = await browserLocation();
+    const current = await currentLocation;
     if (current) setPoint(current);
     return current;
   }
@@ -535,7 +539,7 @@ export default function SubmitPage({
         ? mapped.source === "photo_exif"
           ? "Photo location found. Review the pin before submitting."
           : "Current location captured. Review the pin before submitting."
-        : "No location was found. Tap the map to place the pin.",
+        : "Your phone did not share a location. Tap Use phone location, or place the pin on the map.",
     );
     setPreparing(false);
     setStep("review");
@@ -551,7 +555,7 @@ export default function SubmitPage({
       );
     } else {
       setStatus(
-        "Current location was unavailable. Tap the map to place the pin.",
+        "Phone location is blocked or unavailable. Allow location for this site and try again, or place the pin on the map.",
       );
     }
   }
@@ -958,13 +962,29 @@ export default function SubmitPage({
                   <strong>
                     {point
                       ? "Pin found—tap the map to adjust"
-                      : "Place the pin"}
+                      : "Location required"}
                   </strong>
                 </div>
-                <button type="button" onClick={locate}>
-                  Use my location
-                </button>
+                {point && (
+                  <button type="button" onClick={locate}>
+                    Update from phone
+                  </button>
+                )}
               </div>
+              {!point && (
+                <div className="location-needed">
+                  <div>
+                    <strong>Use the phone's current location</strong>
+                    <span>
+                      Android may hide a photo's saved GPS when it is selected.
+                    </span>
+                  </div>
+                  <button type="button" onClick={locate}>
+                    Use phone location
+                  </button>
+                  <small>Or tap the map to place the pin yourself.</small>
+                </div>
+              )}
               <MapView
                 latitude={mapLat}
                 longitude={mapLng}

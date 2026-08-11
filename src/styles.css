@@ -4451,6 +4451,43 @@ body:has(.login-page) {
   font-weight: 800;
 }
 
+.location-needed {
+  display: grid;
+  gap: 10px;
+  margin: 0 12px 12px;
+  padding: 14px;
+  color: #183d2d;
+  border: 2px solid #e0b82d;
+  border-radius: 15px;
+  background: #fff8dc;
+}
+
+.location-needed div {
+  display: grid;
+  gap: 3px;
+}
+
+.location-needed strong {
+  font-size: 15px;
+}
+
+.location-needed span,
+.location-needed small {
+  color: #5e665e;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.location-needed button {
+  min-height: 50px;
+  color: #fff;
+  border: 0;
+  border-radius: 11px;
+  background: var(--public-green, #24704e);
+  font-size: 14px;
+  font-weight: 900;
+}
+
 .review-map-card .map-view.compact {
   height: 270px;
 }

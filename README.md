@@ -27,6 +27,8 @@ Text search matches names, descriptions, categories, keywords, SKUs, manufacture
 
 Optional photo search sends a compressed preview to the server-side OpenAI vision workflow. The API returns visible descriptors, readable product/SKU clues and alternate search terms; Material Pin then searches the catalog text. OpenAI text embedding models do not accept images, so this is the practical first implementation for a mixed inventory catalog. It is cost-limited per organization and the API key never enters the browser bundle.
 
+When adding an item, photo compression and EXIF extraction finish before any AI request. The employee then chooses **Generate details automatically** or **Enter details myself**. Automatic details can be retried if the service is unavailable, and every generated value remains editable before submission.
+
 Each organization can maintain an **AI catalog guide** describing its business, common materials or assets, preferred terminology, identifier formats and facts the AI must not guess. This makes the same image workflow useful for steel service centers, salvage yards, warehouses and other specialized catalogs without changing code.
 
 Custom lists and fields do not create SQL columns. Their definitions are stored in the organization's `collections` JSON configuration, while field values use the public or private JSON data attached to each record. This lets deployments add fields without database migrations and keeps older records valid when a form changes.

@@ -37,6 +37,7 @@ type PrecisePoint = Point & { accuracy: number };
 type SubmissionStep = "photo" | "crop" | "review" | "complete";
 type AnalysisState = "idle" | "analyzing" | "complete" | "unavailable";
 type DetailsEntryMode = "choice" | "manual";
+type MobileGpsState = "idle" | "locating" | "ready" | "blocked";
 
 type EnrichmentResponse = {
   status?: string;
@@ -50,7 +51,7 @@ type PreparedPhoto = {
   uploadBytes: number;
 };
 
-const MOBILE_MAX_ACCURACY_METERS = 100;
+const MOBILE_REQUIRED_ACCURACY_METERS = 10;
 
 function localDateTime(isoDate: string | null) {
   if (!isoDate) return "";
@@ -135,7 +136,7 @@ function browserLocation(): Promise<Point | null> {
         });
       },
       () => resolve(null),
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 },
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 },
     );
   });
 }
@@ -229,7 +230,7 @@ function usableMobileGps(point: Point | null): point is PrecisePoint {
   return Boolean(
     point &&
       point.accuracy !== null &&
-      point.accuracy <= MOBILE_MAX_ACCURACY_METERS,
+      point.accuracy <= MOBILE_REQUIRED_ACCURACY_METERS,
   );
 }
 
@@ -287,12 +288,16 @@ export default function SubmitPage({
   const [mobileCapturePoint, setMobileCapturePoint] = useState<Point | null>(
     null,
   );
+  const [mobileGpsState, setMobileGpsState] =
+    useState<MobileGpsState>("idle");
   const [queuedPhotos, setQueuedPhotos] = useState<File[]>([]);
   const [queueIndex, setQueueIndex] = useState(0);
   const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
   const metadataPromise = useRef<Promise<Point | null> | null>(null);
   const cameraVideo = useRef<HTMLVideoElement>(null);
   const detailsCard = useRef<HTMLElement>(null);
+  const mobileLocationWatch = useRef<number | null>(null);
+  const mobileBestPoint = useRef<Point | null>(null);
 
   useEffect(() => {
     (async () => {
@@ -402,6 +407,14 @@ export default function SubmitPage({
       cameraStream?.getTracks().forEach((track) => track.stop());
     },
     [cameraStream],
+  );
+
+  useEffect(
+    () => () => {
+      if (mobileLocationWatch.current !== null)
+        navigator.geolocation?.clearWatch(mobileLocationWatch.current);
+    },
+    [],
   );
 
   const collections = useMemo(
@@ -574,48 +587,95 @@ export default function SubmitPage({
     setStep("crop");
   }
 
-  async function enableMobileCamera() {
-    setStatus("Getting a GPS fix before opening the camera…");
-    const current = await browserLocation();
-    if (!usableMobileGps(current)) {
-      setMobileCapturePoint(null);
+  function stopMobileLocationTracking() {
+    if (mobileLocationWatch.current === null) return;
+    navigator.geolocation?.clearWatch(mobileLocationWatch.current);
+    mobileLocationWatch.current = null;
+  }
+
+  function startMobileLocationTracking() {
+    stopMobileLocationTracking();
+    mobileBestPoint.current = null;
+    setMobileCapturePoint(null);
+    setMobileGpsState("locating");
+    if (!navigator.geolocation) {
+      setMobileGpsState("blocked");
       setStatus(
-        current?.accuracy
-          ? `GPS is only accurate to approximately ±${Math.round(current.accuracy)} m. Enable precise location or move where the phone has a clearer GPS signal, then try again.`
-          : "Location is required before the camera can open. Allow precise location for this site, then try again.",
+        "This browser cannot provide the GPS location required for a camera photo.",
       );
       return;
     }
-    setMobileCapturePoint(current);
-    setStatus(
-      `GPS ready (approximately ±${Math.round(current.accuracy || 0)} m). You can take the photo now.`,
+    mobileLocationWatch.current = navigator.geolocation.watchPosition(
+      ({ coords }) => {
+        const lat = validCoordinate(coords.latitude, -90, 90);
+        const lng = validCoordinate(coords.longitude, -180, 180);
+        const accuracy = Number.isFinite(coords.accuracy)
+          ? coords.accuracy
+          : null;
+        if (lat === null || lng === null || accuracy === null) return;
+        const candidate: Point = {
+          lat,
+          lng,
+          accuracy,
+          source: "browser_gps",
+        };
+        const best = mobileBestPoint.current;
+        if (best && best.accuracy !== null && best.accuracy <= accuracy) return;
+        mobileBestPoint.current = candidate;
+        setMobileCapturePoint(candidate);
+        if (usableMobileGps(candidate)) {
+          setMobileGpsState("ready");
+          setStatus(
+            `Precise GPS ready (approximately ±${Math.round(accuracy)} m). The phone will keep improving the fix while the camera is open.`,
+          );
+        } else {
+          setMobileGpsState("locating");
+          setStatus(
+            `Improving GPS accuracy: approximately ±${Math.round(accuracy)} m. Hold still or move into open sky; the shutter unlocks at ±${MOBILE_REQUIRED_ACCURACY_METERS} m or better.`,
+          );
+        }
+      },
+      () => {
+        if (usableMobileGps(mobileBestPoint.current)) return;
+        setMobileGpsState("blocked");
+        setStatus(
+          "A precise GPS fix is unavailable. Allow precise location, turn on phone location, and move where the phone can see more open sky.",
+        );
+      },
+      { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 },
     );
   }
 
   function closeMobileCamera() {
     cameraStream?.getTracks().forEach((track) => track.stop());
     setCameraStream(null);
+    stopMobileLocationTracking();
+    setMobileGpsState("idle");
   }
 
   async function openMobileCamera() {
-    if (!mobileCapturePoint) {
-      setStatus("Enable GPS before opening the camera.");
-      return;
-    }
     if (!navigator.mediaDevices?.getUserMedia) {
       setStatus(
         "This browser cannot open a live camera. Use a current mobile browser.",
       );
       return;
     }
+    setStatus(
+      "Opening the camera and getting the most accurate GPS fix available…",
+    );
+    startMobileLocationTracking();
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: { ideal: "environment" } },
         audio: false,
       });
       setCameraStream(stream);
-      setStatus("Camera ready. Frame the item and tap Take photo.");
+      setStatus(
+        "Camera ready. GPS is refining in the background; the shutter will unlock when the fix is precise.",
+      );
     } catch {
+      stopMobileLocationTracking();
+      setMobileGpsState("idle");
       setStatus(
         "Camera access is blocked. Allow camera access for this site, then try again.",
       );
@@ -628,8 +688,14 @@ export default function SubmitPage({
       setStatus("The camera is still starting. Wait a moment and try again.");
       return;
     }
-    setStatus("Capturing the photo and confirming GPS…");
-    const locationTask = browserLocation();
+    const captureLocation = mobileBestPoint.current;
+    if (!usableMobileGps(captureLocation)) {
+      setStatus(
+        `Wait for GPS accuracy of ±${MOBILE_REQUIRED_ACCURACY_METERS} m or better before taking the photo.`,
+      );
+      return;
+    }
+    setStatus("Capturing the photo with the precise GPS location…");
     const canvas = document.createElement("canvas");
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
@@ -642,15 +708,6 @@ export default function SubmitPage({
     const blob = await new Promise<Blob | null>((resolve) =>
       canvas.toBlob(resolve, "image/jpeg", 0.92),
     );
-    const captureLocation = await locationTask;
-    if (!usableMobileGps(captureLocation)) {
-      closeMobileCamera();
-      setMobileCapturePoint(null);
-      setStatus(
-        "The photo was not accepted because a precise GPS fix was no longer available. Enable precise location and take it again.",
-      );
-      return;
-    }
     if (!blob) {
       setStatus("The camera image could not be saved. Try again.");
       return;
@@ -1047,12 +1104,12 @@ export default function SubmitPage({
               {recordId
                 ? "Start with a new photo"
                 : mobileDevice
-                  ? "Enable GPS, then take a photo"
+                  ? "Open the camera and take a photo"
                   : "Choose photos to add"}
             </h1>
             <p>
               {mobileDevice
-                ? "Material Pin requires a live location before opening the camera, then locks that location to the new photo."
+                ? "The camera requests precise location automatically and keeps refining the GPS fix until you take the photo."
                 : "Choose one or many original image files. Material Pin reads each photo's date and embedded GPS, then walks you through them one at a time."}
             </p>
           </section>
@@ -1084,63 +1141,64 @@ export default function SubmitPage({
               )}
               {mobileDevice ? (
                 <div className="mobile-camera-flow">
-                  <section
-                    className={`mobile-gps-gate ${mobileCapturePoint ? "ready" : ""}`}
-                  >
-                    <span aria-hidden="true">
-                      {mobileCapturePoint ? "✓" : "1"}
-                    </span>
-                    <div>
-                      <small>STEP 1</small>
-                      <strong>
-                        {mobileCapturePoint
-                          ? "GPS is ready"
-                          : "Enable precise location"}
-                      </strong>
-                      <p>
-                        {mobileCapturePoint
-                          ? `${mobileCapturePoint.lat.toFixed(6)}, ${mobileCapturePoint.lng.toFixed(6)} · approximately ±${Math.round(mobileCapturePoint.accuracy || 0)} m`
-                          : "The camera stays locked until a valid location is captured."}
-                      </p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => void enableMobileCamera()}
-                    >
-                      {mobileCapturePoint ? "Refresh GPS" : "Enable GPS"}
-                    </button>
-                  </section>
                   {cameraStream ? (
                     <section className="live-camera-panel">
                       <video ref={cameraVideo} autoPlay muted playsInline />
-                      <div>
+                      <div className={`camera-gps-status ${mobileGpsState}`}>
+                        <span aria-hidden="true">
+                          {mobileGpsState === "ready" ? "✓" : "⌖"}
+                        </span>
+                        <div>
+                          <strong>
+                            {mobileGpsState === "ready"
+                              ? `Precise GPS · ±${Math.round(mobileCapturePoint?.accuracy || 0)} m`
+                              : mobileGpsState === "blocked"
+                                ? "Precise GPS unavailable"
+                                : "Getting precise GPS…"}
+                          </strong>
+                          <small>
+                            {mobileGpsState === "ready"
+                              ? "The phone is still refining the location."
+                              : mobileCapturePoint?.accuracy
+                                ? `Current fix ±${Math.round(mobileCapturePoint.accuracy)} m · needs ±${MOBILE_REQUIRED_ACCURACY_METERS} m or better`
+                                : `The shutter unlocks at ±${MOBILE_REQUIRED_ACCURACY_METERS} m or better.`}
+                          </small>
+                        </div>
+                        {mobileGpsState === "blocked" && (
+                          <button
+                            type="button"
+                            onClick={startMobileLocationTracking}
+                          >
+                            Try GPS again
+                          </button>
+                        )}
+                      </div>
+                      <div className="camera-actions">
                         <button type="button" onClick={closeMobileCamera}>
                           Close camera
                         </button>
                         <button
                           type="button"
                           className="camera-shutter"
+                          disabled={!usableMobileGps(mobileCapturePoint)}
                           onClick={() => void captureMobilePhoto()}
                         >
-                          Take photo
+                          {usableMobileGps(mobileCapturePoint)
+                            ? "Take photo"
+                            : "Waiting for precise GPS"}
                         </button>
                       </div>
                     </section>
                   ) : (
                     <button
                       type="button"
-                      className={`capture-choice primary mobile-camera-choice ${mobileCapturePoint ? "" : "disabled"}`}
-                      disabled={!mobileCapturePoint}
+                      className="capture-choice primary mobile-camera-choice"
                       onClick={() => void openMobileCamera()}
                     >
                       <CameraIcon />
-                      <small>STEP 2</small>
+                      <small>CAMERA + GPS</small>
                       <strong>Open live camera</strong>
-                      <span>
-                        {mobileCapturePoint
-                          ? "Take a new photo"
-                          : "Enable GPS first"}
-                      </span>
+                      <span>Camera and precise location start together</span>
                     </button>
                   )}
                 </div>

@@ -1,4 +1,4 @@
-const CACHE = "material-pin-shell-v9";
+const CACHE = "material-pin-shell-v10";
 const base = new URL("./", self.location.href);
 const shell = [
   base.href,

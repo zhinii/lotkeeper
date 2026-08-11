@@ -209,7 +209,7 @@ test("employee photo review uses consistent inventory fields and visibility", as
   assert.match(submit, /without a new photo/);
 });
 
-test("submitters review AI and EXIF values before a locked confirmation", async () => {
+test("submitters choose optional AI after photo and EXIF preparation", async () => {
   const submit = await read("src/pages/SubmitPage.tsx");
   const cropper = await read("src/components/PhotoCropper.tsx");
   const styles = await read("src/styles.css");
@@ -272,15 +272,26 @@ test("submitters review AI and EXIF values before a locked confirmation", async 
   assert.match(submit, /safeWarnings/);
   const cropStart = submit.indexOf("async function confirmCrop");
   const cropCall = submit.indexOf("await cropPhoto", cropStart);
-  const aiCall = submit.indexOf("await analyzeSelectedPhoto", cropCall);
-  assert.ok(cropStart < cropCall && cropCall < aiCall);
+  const cropEnd = submit.indexOf("async function locate", cropStart);
+  assert.ok(cropStart < cropCall && cropCall < cropEnd);
+  assert.doesNotMatch(
+    submit.slice(cropStart, cropEnd),
+    /analyzeSelectedPhoto/,
+    "AI must not run automatically during photo and EXIF preparation",
+  );
+  assert.match(submit, /Generate details automatically/);
+  assert.match(submit, /Enter details myself/);
+  assert.match(submit, /Try automatic details again/);
+  assert.match(submit, /onClick=\{\(\) => void analyzeSelectedPhoto\(\)\}/);
+  assert.match(submit, /analysisState === "unavailable"[\s\S]*\? "failed"/);
+  assert.match(styles, /\.ai-details-choice/);
   assert.match(submit, /maximum = 1920/);
   assert.match(submit, /preparedPhoto!\.upload/);
   assert.match(submit, /Optimized for faster upload/);
   assert.ok(
     submit.indexOf("image_data_url") <
       submit.indexOf('.from("submissions").insert'),
-    "AI preview should happen before the final submission insert",
+    "Optional AI generation should happen before the final submission insert",
   );
   assert.match(edge, /Photo-first preview/);
   assert.match(edge, /store: false/);
@@ -305,6 +316,6 @@ test("Material Pin is installable while retaining the GitHub Pages website", asy
   assert.match(manifest, /"name": "Material Pin"/);
   assert.match(manifest, /icon-192\.png/);
   assert.match(manifest, /icon-512\.png/);
-  assert.match(worker, /material-pin-shell-v8/);
+  assert.match(worker, /material-pin-shell-v9/);
   assert.match(worker, /request\.mode === "navigate"/);
 });

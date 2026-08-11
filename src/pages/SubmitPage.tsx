@@ -36,6 +36,7 @@ type PrecisePoint = Point & { accuracy: number };
 
 type SubmissionStep = "photo" | "crop" | "review" | "complete";
 type AnalysisState = "idle" | "analyzing" | "complete" | "unavailable";
+type DetailsEntryMode = "choice" | "manual";
 
 type EnrichmentResponse = {
   status?: string;
@@ -277,6 +278,8 @@ export default function SubmitPage({
   const [publicVisible, setPublicVisible] = useState(true);
   const [preparing, setPreparing] = useState(false);
   const [analysisState, setAnalysisState] = useState<AnalysisState>("idle");
+  const [detailsEntryMode, setDetailsEntryMode] =
+    useState<DetailsEntryMode>("choice");
   const [aiSuggestions, setAiSuggestions] = useState<
     Submission["ai_suggestions"] | null
   >(null);
@@ -289,6 +292,7 @@ export default function SubmitPage({
   const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
   const metadataPromise = useRef<Promise<Point | null> | null>(null);
   const cameraVideo = useRef<HTMLVideoElement>(null);
+  const detailsCard = useRef<HTMLElement>(null);
 
   useEffect(() => {
     (async () => {
@@ -456,16 +460,21 @@ export default function SubmitPage({
     }
   }
 
-  async function analyzeSelectedPhoto(imageDataUrl: string) {
-    if (!organization?.ai_enabled) return;
+  async function analyzeSelectedPhoto() {
+    if (!organization?.ai_enabled || !preparedPhoto) {
+      setStatus("Finish preparing the photo before generating details.");
+      return;
+    }
+    setDetailsEntryMode("manual");
     setAnalysisState("analyzing");
+    setStatus("Generating item details from the photo…");
     try {
       const { data, error } = await requireSupabase().functions.invoke(
         "enrich-submission",
         {
           body: {
             organization_id: organization.id,
-            image_data_url: imageDataUrl,
+            image_data_url: preparedPhoto.analysisDataUrl,
           },
         },
       );
@@ -475,9 +484,23 @@ export default function SubmitPage({
         throw new Error("Suggestions were unavailable.");
       applySuggestions(result.suggestions);
       setAnalysisState("complete");
-    } catch {
+      setStatus("Details generated. Review and edit them before submitting.");
+    } catch (error) {
+      console.error("Automatic photo details failed", error);
       setAnalysisState("unavailable");
+      setStatus(
+        "Automatic details could not be generated. Try again or enter the details yourself.",
+      );
     }
+  }
+
+  function enterDetailsManually() {
+    setDetailsEntryMode("manual");
+    setStatus("Enter the item details below, then submit them for review.");
+    requestAnimationFrame(() => {
+      detailsCard.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      detailsCard.current?.querySelector<HTMLInputElement>("input")?.focus();
+    });
   }
 
   async function readPhotoLocation(
@@ -544,6 +567,7 @@ export default function SubmitPage({
     setPoint(null);
     setAiSuggestions(null);
     setAnalysisState("idle");
+    setDetailsEntryMode("choice");
     setPreparing(false);
     setStatus("Crop the photo so the item is clear.");
     metadataPromise.current = readPhotoLocation(file, fallbackLocation);
@@ -666,20 +690,20 @@ export default function SubmitPage({
     setPreparedPhoto(null);
     setAiSuggestions(null);
     setAnalysisState("idle");
+    setDetailsEntryMode("choice");
     setStatus("Preparing a smaller photo…");
 
     const metadataTask = metadataPromise.current || Promise.resolve(null);
-
-    const analysisTask = prepareSubmissionPhoto(file).then(async (prepared) => {
-      setPreparedPhoto(prepared);
-      await analyzeSelectedPhoto(prepared.analysisDataUrl);
-    });
     let mapped: Point | null;
     try {
-      [mapped] = await Promise.all([metadataTask, analysisTask]);
+      const [photoLocation, prepared] = await Promise.all([
+        metadataTask,
+        prepareSubmissionPhoto(file),
+      ]);
+      mapped = photoLocation;
+      setPreparedPhoto(prepared);
     } catch {
       setPreparing(false);
-      setAnalysisState("unavailable");
       setStatus(
         "This photo could not be prepared. Try taking another photo or choose a JPEG, PNG or WebP image.",
       );
@@ -716,6 +740,7 @@ export default function SubmitPage({
   function reviewExisting() {
     if (!recordId || !target) return;
     setAnalysisState("idle");
+    setDetailsEntryMode("manual");
     setStep("review");
   }
 
@@ -825,7 +850,7 @@ export default function SubmitPage({
         ai_status:
           analysisState === "complete"
             ? "complete"
-            : organization.ai_enabled && photo
+            : analysisState === "unavailable"
               ? "failed"
               : "not_requested",
         ai_suggestions: confirmedSuggestions,
@@ -1191,7 +1216,7 @@ export default function SubmitPage({
               ? ` · ${queueIndex + 1} OF ${queuedPhotos.length}`
               : ""}
           </small>
-          <h1>Check what Material Pin found</h1>
+          <h1>Check the photo and item details</h1>
           <p>
             Correct anything that is not right, confirm the pin, then submit.
           </p>
@@ -1285,8 +1310,61 @@ export default function SubmitPage({
             </div>
           </section>
 
+          {organization.ai_enabled && photo && preparedPhoto && (
+            <section
+              className={`ai-details-choice ${analysisState}`}
+              aria-live="polite"
+            >
+              <div className="ai-choice-copy">
+                <small>OPTIONAL PHOTO ASSISTANT</small>
+                <h2>
+                  {analysisState === "analyzing"
+                    ? "Generating the item details…"
+                    : analysisState === "complete"
+                      ? "Details generated—please review them"
+                      : analysisState === "unavailable"
+                        ? "Automatic details need another try"
+                        : "How would you like to add the details?"}
+                </h2>
+                <p>
+                  {analysisState === "complete"
+                    ? "The photo filled the fields below. Change anything that is not correct."
+                    : analysisState === "unavailable"
+                      ? "The photo and location are safe. Try the assistant again, or type the details yourself."
+                      : "Let the photo assistant suggest the name, description, category and searchable terms, or enter them yourself."}
+                </p>
+              </div>
+              <div className="ai-choice-actions">
+                <button
+                  type="button"
+                  className="ai-generate-button"
+                  disabled={analysisState === "analyzing"}
+                  onClick={() => void analyzeSelectedPhoto()}
+                >
+                  {analysisState === "analyzing"
+                    ? "Generating…"
+                    : analysisState === "complete"
+                      ? "Generate again"
+                      : analysisState === "unavailable"
+                        ? "Try automatic details again"
+                        : "Generate details automatically"}
+                </button>
+                {analysisState !== "complete" && (
+                  <button
+                    type="button"
+                    className="ai-manual-button"
+                    onClick={enterDetailsManually}
+                  >
+                    Enter details myself
+                  </button>
+                )}
+              </div>
+            </section>
+          )}
+
           <section
             className={`review-details-card ${analysisState === "complete" ? "ai-filled" : ""}`}
+            ref={detailsCard}
           >
             <div className="review-card-title">
               <div>
@@ -1295,7 +1373,10 @@ export default function SubmitPage({
               </div>
               {analysisState === "complete" && <span>Filled from photo</span>}
               {analysisState === "unavailable" && (
-                <span className="neutral">AI unavailable—enter details</span>
+                <span className="neutral">Enter details or retry above</span>
+              )}
+              {analysisState === "idle" && detailsEntryMode === "manual" && (
+                <span className="neutral">Manual entry</span>
               )}
             </div>
 

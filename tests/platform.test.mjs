@@ -212,6 +212,7 @@ test("employee photo review uses consistent inventory fields and visibility", as
 test("submitters review AI and EXIF values before a locked confirmation", async () => {
   const submit = await read("src/pages/SubmitPage.tsx");
   const cropper = await read("src/components/PhotoCropper.tsx");
+  const styles = await read("src/styles.css");
   const edge = await read("supabase/functions/enrich-submission/index.ts");
   assert.match(submit, /SUBMITTED/);
   assert.match(submit, /You\s+do\s+not\s+need\s+to\s+submit\s+it\s+again/);
@@ -246,6 +247,10 @@ test("submitters review AI and EXIF values before a locked confirmation", async 
   assert.match(submit, /metadata\?\.GPSLatitude/);
   assert.match(submit, /metadata\?\.GPSLongitude/);
   assert.match(submit, /function exifCoordinate/);
+  assert.match(submit, /const currentLocation = browserLocation\(\)/);
+  assert.match(submit, /Use phone location/);
+  assert.match(submit, /Android may hide a photo's saved GPS/);
+  assert.match(styles, /\.location-needed/);
   assert.match(submit, /safeWarnings/);
   const cropStart = submit.indexOf("async function confirmCrop");
   const cropCall = submit.indexOf("await cropPhoto", cropStart);
@@ -282,6 +287,6 @@ test("Material Pin is installable while retaining the GitHub Pages website", asy
   assert.match(manifest, /"name": "Material Pin"/);
   assert.match(manifest, /icon-192\.png/);
   assert.match(manifest, /icon-512\.png/);
-  assert.match(worker, /material-pin-shell-v6/);
+  assert.match(worker, /material-pin-shell-v7/);
   assert.match(worker, /request\.mode === "navigate"/);
 });

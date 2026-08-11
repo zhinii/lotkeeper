@@ -55,17 +55,80 @@ function localDateTime(isoDate: string | null) {
   return new Date(date.getTime() - offset).toISOString().slice(0, 16);
 }
 
+function validCoordinate(value: unknown, minimum: number, maximum: number) {
+  const number = Number(value);
+  return Number.isFinite(number) && number >= minimum && number <= maximum
+    ? number
+    : null;
+}
+
+function exifNumber(value: unknown): number | null {
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : null;
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    const rational = trimmed.match(
+      /^(-?\d+(?:\.\d+)?)\s*\/\s*(\d+(?:\.\d+)?)$/,
+    );
+    if (rational) {
+      const denominator = Number(rational[2]);
+      const number = Number(rational[1]) / denominator;
+      return denominator !== 0 && Number.isFinite(number) ? number : null;
+    }
+    const number = Number(trimmed);
+    return Number.isFinite(number) ? number : null;
+  }
+  if (value && typeof value === "object") {
+    const rational = value as { numerator?: unknown; denominator?: unknown };
+    const numerator = exifNumber(rational.numerator);
+    const denominator = exifNumber(rational.denominator);
+    if (numerator !== null && denominator !== null && denominator !== 0) {
+      return numerator / denominator;
+    }
+  }
+  return null;
+}
+
+function exifCoordinate(
+  value: unknown,
+  reference: unknown,
+  minimum: number,
+  maximum: number,
+) {
+  const values = Array.isArray(value) ? value : [value];
+  const parts = values.map(exifNumber);
+  if (!parts.length || parts.some((part) => part === null)) return null;
+  const degrees = parts[0] as number;
+  const absolute =
+    Math.abs(degrees) +
+    (parts.length > 1 ? (parts[1] as number) / 60 : 0) +
+    (parts.length > 2 ? (parts[2] as number) / 3600 : 0);
+  const direction = String(reference || "")
+    .trim()
+    .toUpperCase();
+  const signed =
+    direction === "S" || direction === "W" || degrees < 0
+      ? -absolute
+      : absolute;
+  return validCoordinate(signed, minimum, maximum);
+}
+
 function browserLocation(): Promise<Point | null> {
   if (!navigator.geolocation) return Promise.resolve(null);
   return new Promise((resolve) => {
     navigator.geolocation.getCurrentPosition(
-      ({ coords }) =>
+      ({ coords }) => {
+        const lat = validCoordinate(coords.latitude, -90, 90);
+        const lng = validCoordinate(coords.longitude, -180, 180);
+        if (lat === null || lng === null) return resolve(null);
         resolve({
-          lat: coords.latitude,
-          lng: coords.longitude,
-          accuracy: coords.accuracy,
+          lat,
+          lng,
+          accuracy: Number.isFinite(coords.accuracy) ? coords.accuracy : null,
           source: "browser_gps",
-        }),
+        });
+      },
       () => resolve(null),
       { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 },
     );
@@ -268,12 +331,15 @@ export default function SubmitPage({
           ]),
         ) as Record<CommercialCaptureKey, string>,
       );
-      setPoint({
-        lat: item.latitude,
-        lng: item.longitude,
-        accuracy: null,
-        source: item.location_source,
-      });
+      const itemLat = validCoordinate(item.latitude, -90, 90);
+      const itemLng = validCoordinate(item.longitude, -180, 180);
+      if (itemLat !== null && itemLng !== null)
+        setPoint({
+          lat: itemLat,
+          lng: itemLng,
+          accuracy: null,
+          source: item.location_source,
+        });
     })();
   }, [slug, recordId]);
 
@@ -367,7 +433,14 @@ export default function SubmitPage({
   async function readPhotoLocation(file: File) {
     const [coordinates, metadata] = await Promise.all([
       readGps(file).catch(() => null),
-      readExif(file, ["DateTimeOriginal", "CreateDate"]).catch(() => null),
+      readExif(file, [
+        "DateTimeOriginal",
+        "CreateDate",
+        "GPSLatitude",
+        "GPSLatitudeRef",
+        "GPSLongitude",
+        "GPSLongitudeRef",
+      ]).catch(() => null),
     ]);
     const captured = metadata?.DateTimeOriginal || metadata?.CreateDate;
     const fileDate = new Date(file.lastModified);
@@ -378,10 +451,21 @@ export default function SubmitPage({
           ? fileDate.toISOString()
           : new Date().toISOString(),
     );
-    if (coordinates?.latitude != null && coordinates?.longitude != null) {
+    const photoLat =
+      validCoordinate(coordinates?.latitude, -90, 90) ??
+      exifCoordinate(metadata?.GPSLatitude, metadata?.GPSLatitudeRef, -90, 90);
+    const photoLng =
+      validCoordinate(coordinates?.longitude, -180, 180) ??
+      exifCoordinate(
+        metadata?.GPSLongitude,
+        metadata?.GPSLongitudeRef,
+        -180,
+        180,
+      );
+    if (photoLat !== null && photoLng !== null) {
       const exifPoint: Point = {
-        lat: coordinates.latitude,
-        lng: coordinates.longitude,
+        lat: photoLat,
+        lng: photoLng,
         accuracy: null,
         source: "photo_exif",
       };

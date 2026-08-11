@@ -36,6 +36,24 @@ export default function MapView({
   onSelect,
   compact,
 }: Props) {
+  const numericLatitude = Number(latitude);
+  const numericLongitude = Number(longitude);
+  const numericZoom = Number(zoom);
+  const safeLatitude =
+    Number.isFinite(numericLatitude) &&
+    numericLatitude >= -90 &&
+    numericLatitude <= 90
+      ? numericLatitude
+      : 0;
+  const safeLongitude =
+    Number.isFinite(numericLongitude) &&
+    numericLongitude >= -180 &&
+    numericLongitude <= 180
+      ? numericLongitude
+      : 0;
+  const safeZoom = Number.isFinite(numericZoom)
+    ? Math.min(22, Math.max(0, numericZoom))
+    : 2;
   const host = useRef<HTMLDivElement>(null);
   const map = useRef<any>(null);
   const pickMarker = useRef<any>(null);
@@ -62,8 +80,8 @@ export default function MapView({
     if (!host.current || !window.maplibregl) return;
     map.current = new window.maplibregl.Map({
       container: host.current,
-      center: [longitude, latitude],
-      zoom,
+      center: [safeLongitude, safeLatitude],
+      zoom: safeZoom,
       style: {
         version: 8,
         sources: {
@@ -86,7 +104,7 @@ export default function MapView({
         draggable: true,
         color: "#ffcf24",
       })
-        .setLngLat([longitude, latitude])
+        .setLngLat([safeLongitude, safeLatitude])
         .addTo(map.current);
       pickMarker.current.on("dragend", () => {
         if (!interactionMode.current.picker) return;
@@ -138,31 +156,44 @@ export default function MapView({
     if (map.current) {
       const center = map.current.getCenter();
       if (
-        Math.abs(center.lat - latitude) > 0.000001 ||
-        Math.abs(center.lng - longitude) > 0.000001 ||
-        Math.abs(map.current.getZoom() - zoom) > 0.01
+        Math.abs(center.lat - safeLatitude) > 0.000001 ||
+        Math.abs(center.lng - safeLongitude) > 0.000001 ||
+        Math.abs(map.current.getZoom() - safeZoom) > 0.01
       ) {
         map.current.easeTo({
-          center: [longitude, latitude],
-          zoom,
+          center: [safeLongitude, safeLatitude],
+          zoom: safeZoom,
           duration: 250,
         });
       }
     }
-    pickMarker.current?.setLngLat([longitude, latitude]);
-  }, [latitude, longitude, zoom]);
+    pickMarker.current?.setLngLat([safeLongitude, safeLatitude]);
+  }, [safeLatitude, safeLongitude, safeZoom]);
 
   useEffect(() => {
     if (!map.current) return;
     markers.current.forEach((marker) => marker.remove());
-    markers.current = records.map((record) => {
+    markers.current = records.flatMap((record) => {
+      const recordLatitude = Number(record.latitude);
+      const recordLongitude = Number(record.longitude);
+      if (
+        !Number.isFinite(recordLatitude) ||
+        !Number.isFinite(recordLongitude) ||
+        recordLatitude < -90 ||
+        recordLatitude > 90 ||
+        recordLongitude < -180 ||
+        recordLongitude > 180
+      )
+        return [];
       const node = document.createElement("button");
       node.className = `map-pin ${record.id === selectedId ? "selected" : ""}`;
       node.title = record.name;
       node.onclick = () => callbacks.current.onSelect?.(record.id);
-      return new window.maplibregl.Marker({ element: node })
-        .setLngLat([record.longitude, record.latitude])
-        .addTo(map.current);
+      return [
+        new window.maplibregl.Marker({ element: node })
+          .setLngLat([recordLongitude, recordLatitude])
+          .addTo(map.current),
+      ];
     });
   }, [records, selectedId]);
 

@@ -93,7 +93,7 @@ export default function DirectoryPage({ slug }: { slug: string }) {
   );
   const [mapImage, setMapImage] = useState("");
   const photoSearchInput = useRef<HTMLInputElement>(null);
-  const resultButtons = useRef<Record<string, HTMLButtonElement | null>>({});
+  const finderMap = useRef<HTMLElement>(null);
   const navigatorTouchStart = useRef<number | null>(null);
 
   useEffect(() => {
@@ -230,6 +230,10 @@ export default function DirectoryPage({ slug }: { slug: string }) {
   const selectedCollection = visibleCollections.find(
     (item) => item.id === selected?.collection_id,
   );
+  const activeSku = activeResult
+    ? String(activeResult.data.sku || activeResult.data.asset_id || "").trim()
+    : "";
+  const activeLocation = activeResult ? itemLocation(activeResult) : "";
 
   useEffect(() => {
     if (!visibleRecords.length) {
@@ -258,6 +262,20 @@ export default function DirectoryPage({ slug }: { slug: string }) {
       },
       matching_records: resultCount,
     });
+  }
+
+  function focusFinder() {
+    window.requestAnimationFrame(() =>
+      finderMap.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      }),
+    );
+  }
+
+  async function runTextSearch() {
+    await logSearch("text");
+    focusFinder();
   }
 
   async function runImageSearch(file: File) {
@@ -299,6 +317,7 @@ export default function DirectoryPage({ slug }: { slug: string }) {
         return terms.some((term) => haystack.includes(term));
       }).length;
       await logSearch("image", searchText, count);
+      focusFinder();
     } catch (error) {
       setMessage(
         error instanceof Error
@@ -317,19 +336,18 @@ export default function DirectoryPage({ slug }: { slug: string }) {
     setInventoryOpen(false);
   }
 
+  function selectRecord(id: string) {
+    setSelectedId(id);
+    setDetailOpen(false);
+    setInventoryOpen(false);
+  }
+
   function showResult(index: number) {
     if (!visibleRecords.length) return;
     const nextIndex = Math.min(visibleRecords.length - 1, Math.max(0, index));
     const next = visibleRecords[nextIndex];
     setSelectedId(next.id);
     setDetailOpen(false);
-    if (window.matchMedia("(min-width: 851px)").matches)
-      window.requestAnimationFrame(() =>
-        resultButtons.current[next.id]?.scrollIntoView({
-          behavior: "smooth",
-          block: "nearest",
-        }),
-      );
   }
 
   function finishNavigatorSwipe(clientX: number) {
@@ -417,12 +435,12 @@ export default function DirectoryPage({ slug }: { slug: string }) {
                   setImageSearchMatched(null);
                   setSearchKind("text");
                 }}
-                onKeyDown={(event) =>
-                  event.key === "Enter" && logSearch("text")
-                }
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") void runTextSearch();
+                }}
                 placeholder="Name, SKU, material, location…"
               />
-              <button onClick={() => logSearch("text")}>Search</button>
+              <button onClick={() => void runTextSearch()}>Search</button>
             </div>
           </label>
           <div className="image-search-control">
@@ -492,6 +510,7 @@ export default function DirectoryPage({ slug }: { slug: string }) {
                   onChange={(event) => {
                     setCollection(event.target.value);
                     void logSearch("filter");
+                    focusFinder();
                   }}
                 >
                   <option value="all">All item groups</option>
@@ -509,6 +528,7 @@ export default function DirectoryPage({ slug }: { slug: string }) {
                   onChange={(event) => {
                     setCategory(event.target.value);
                     void logSearch("filter");
+                    focusFinder();
                   }}
                 >
                   <option value="all">All categories</option>
@@ -524,6 +544,7 @@ export default function DirectoryPage({ slug }: { slug: string }) {
                   onChange={(event) => {
                     setAvailability(event.target.value as AvailabilityFilter);
                     void logSearch("filter");
+                    focusFinder();
                   }}
                 >
                   <option value="all">Any availability</option>
@@ -539,6 +560,7 @@ export default function DirectoryPage({ slug }: { slug: string }) {
                   onChange={(event) => {
                     setLocationFilter(event.target.value);
                     void logSearch("filter");
+                    focusFinder();
                   }}
                 >
                   <option value="all">All locations</option>
@@ -551,83 +573,14 @@ export default function DirectoryPage({ slug }: { slug: string }) {
           </details>
         </section>
 
-        <section className="material-search-panel finder-results-panel">
-          <div className="material-results-heading">
-            <div>
-              <small>NUMBERED TO MATCH THE MAP</small>
-              <h2>{visibleRecords.length} results</h2>
-            </div>
-            {(query ||
-              collection !== "all" ||
-              category !== "all" ||
-              availability !== "all" ||
-              locationFilter !== "all") && (
-              <button onClick={clearSearch}>Clear</button>
-            )}
-          </div>
-          <div className="material-result-list">
-            {visibleRecords.map((item, index) => (
-              <button
-                className={
-                  selectedId === item.id
-                    ? "material-result-card selected"
-                    : "material-result-card"
-                }
-                key={item.id}
-                ref={(node) => {
-                  resultButtons.current[item.id] = node;
-                }}
-                onClick={() => openRecord(item.id)}
-                onMouseEnter={() => setSelectedId(item.id)}
-                onFocus={() => setSelectedId(item.id)}
-              >
-                <span className="result-thumb">
-                  <b className="result-index" aria-hidden="true">
-                    {index + 1}
-                  </b>
-                  {item.photo_path ? (
-                    <img src={publicPhoto(item.photo_path)} alt="" />
-                  ) : (
-                    <span className="generic-pin" aria-hidden="true">
-                      ●
-                    </span>
-                  )}
-                </span>
-                <span className="result-copy">
-                  <small>{item.category}</small>
-                  <strong>{item.name}</strong>
-                  <span>
-                    {String(item.data.sku || "No SKU")}
-                    {itemLocation(item) ? ` · ${itemLocation(item)}` : ""}
-                  </span>
-                </span>
-                {item.quantity !== null && (
-                  <output>
-                    {item.quantity} <small>{item.unit}</small>
-                  </output>
-                )}
-              </button>
-            ))}
-            {!visibleRecords.length && (
-              <div className="empty material-empty">
-                <h2>No exact matches</h2>
-                <p>
-                  Try fewer words, remove a filter, or search with another
-                  photo.
-                </p>
-              </div>
-            )}
-          </div>
-        </section>
-
-        <section className="material-map-panel">
+        <section className="material-map-panel" ref={finderMap}>
           <SiteMapView
             organization={organization}
             mapImageUrl={mapImage}
             records={visibleRecords}
             pinNumbers={pinNumbers}
             selectedId={selectedId}
-            onSelect={openRecord}
+            onSelect={selectRecord}
             boundary={organization.boundary}
           />
           {activeResult ? (
@@ -667,6 +620,79 @@ export default function DirectoryPage({ slug }: { slug: string }) {
             <span className="map-count" aria-live="polite">
               No matching pins
             </span>
+          )}
+        </section>
+
+        <section className="active-result-section" aria-live="polite">
+          {activeResult ? (
+            <article className="active-result-card">
+              {activeResult.photo_path ? (
+                <img
+                  src={publicPhoto(activeResult.photo_path)}
+                  alt={activeResult.name}
+                />
+              ) : (
+                <div className="active-result-photo-empty">
+                  <span aria-hidden="true">●</span>
+                  <small>No item photo</small>
+                </div>
+              )}
+              <div className="active-result-copy">
+                <small className="active-result-position">
+                  RESULT {activeResultIndex + 1} OF {visibleRecords.length} ·{" "}
+                  {selectedCollection?.name || activeResult.category}
+                </small>
+                <h2>{activeResult.name}</h2>
+                <p>
+                  {activeResult.description ||
+                    "No description has been added for this item."}
+                </p>
+                <dl>
+                  {activeSku && (
+                    <div>
+                      <dt>SKU / asset ID</dt>
+                      <dd>{activeSku}</dd>
+                    </div>
+                  )}
+                  {activeLocation && (
+                    <div>
+                      <dt>Location</dt>
+                      <dd>{activeLocation}</dd>
+                    </div>
+                  )}
+                  {activeResult.quantity !== null && (
+                    <div>
+                      <dt>On hand</dt>
+                      <dd>
+                        {activeResult.quantity} {activeResult.unit}
+                      </dd>
+                    </div>
+                  )}
+                  <div>
+                    <dt>Updated</dt>
+                    <dd>
+                      {new Date(activeResult.updated_at).toLocaleDateString()}
+                    </dd>
+                  </div>
+                </dl>
+                {!!activeResult.keywords.length && (
+                  <div className="active-result-keywords">
+                    {activeResult.keywords.slice(0, 5).map((keyword) => (
+                      <span key={keyword}>{keyword}</span>
+                    ))}
+                  </div>
+                )}
+                <button onClick={() => openRecord(activeResult.id)}>
+                  Open full details
+                </button>
+              </div>
+            </article>
+          ) : (
+            <div className="active-result-empty">
+              <h2>No matching items</h2>
+              <p>Try fewer words, another photo, or clear the filters.</p>
+              <button onClick={clearSearch}>Clear search</button>
+            </div>
           )}
         </section>
       </main>

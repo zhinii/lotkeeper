@@ -257,8 +257,10 @@ export default function MapView({
           record.data.bin ||
           "",
       ).trim();
+      const sku = String(record.data.sku || record.data.asset_id || "").trim();
       previewDetail.textContent = [
         record.category,
+        sku ? `SKU ${sku}` : "",
         record.quantity === null
           ? ""
           : `${record.quantity}${record.unit ? ` ${record.unit}` : ""}`,

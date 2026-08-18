@@ -149,10 +149,10 @@
 }
 .material-workspace {
   display: grid;
-  grid-template-columns: minmax(330px, 430px) minmax(430px, 1fr);
-  grid-template-rows: auto minmax(0, 1fr);
-  height: calc(100vh - 69px);
-  min-height: 640px;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto auto auto;
+  min-height: calc(100vh - 69px);
+  background: #eef2ef;
 }
 .finder-toolbar {
   display: grid;
@@ -445,14 +445,15 @@
   font-weight: 900;
 }
 .material-map-panel {
-  position: sticky;
-  top: 0;
+  position: relative;
   grid-row: 2;
-  min-height: 0;
+  height: clamp(430px, 56vh, 690px);
+  min-height: 430px;
+  scroll-margin-top: 72px;
 }
 .material-map-panel .map-view {
   height: 100%;
-  min-height: 500px;
+  min-height: 430px;
   border: 0;
 }
 .material-map-panel .map-count {
@@ -536,6 +537,136 @@
   color: var(--muted);
   font-size: 9px;
 }
+.active-result-section {
+  grid-row: 3;
+  padding: 22px clamp(16px, 4vw, 56px) 100px;
+  background: #eef2ef;
+}
+.active-result-card {
+  display: grid;
+  grid-template-columns: minmax(260px, 390px) minmax(0, 1fr);
+  width: min(1180px, 100%);
+  min-height: 320px;
+  margin: 0 auto;
+  overflow: hidden;
+  background: #fff;
+  border: 1px solid #c8d2cc;
+  border-radius: 18px;
+  box-shadow: 0 12px 32px #173d2e1c;
+}
+.active-result-card > img,
+.active-result-photo-empty {
+  width: 100%;
+  height: 100%;
+  min-height: 320px;
+  object-fit: cover;
+  background: #dfe7e2;
+}
+.active-result-photo-empty {
+  display: grid;
+  place-content: center;
+  gap: 8px;
+  color: var(--muted);
+  text-align: center;
+}
+.active-result-photo-empty span {
+  color: var(--yellow);
+  -webkit-text-stroke: 3px var(--navy);
+  font-size: 58px;
+}
+.active-result-copy {
+  display: grid;
+  align-content: center;
+  padding: clamp(22px, 4vw, 44px);
+}
+.active-result-position {
+  color: var(--blue);
+  font-size: 9px;
+  font-weight: 950;
+  letter-spacing: 0.1em;
+}
+.active-result-copy h2 {
+  margin: 7px 0 9px;
+  color: var(--navy);
+  font-size: clamp(25px, 4vw, 38px);
+  letter-spacing: -0.035em;
+}
+.active-result-copy > p {
+  max-width: 760px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.55;
+}
+.active-result-copy dl {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0;
+  margin: 20px 0 14px;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+.active-result-copy dl div {
+  min-width: 0;
+  padding: 12px 12px 12px 0;
+}
+.active-result-copy dt {
+  color: var(--muted);
+  font-size: 8px;
+  font-weight: 900;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+.active-result-copy dd {
+  margin: 4px 0 0;
+  overflow-wrap: anywhere;
+  color: var(--navy);
+  font-size: 12px;
+  font-weight: 800;
+}
+.active-result-keywords {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 18px;
+}
+.active-result-keywords span {
+  padding: 5px 8px;
+  color: var(--public-green-dark);
+  background: var(--public-mint);
+  border-radius: 999px;
+  font-size: 9px;
+  font-weight: 750;
+}
+.active-result-copy > button,
+.active-result-empty button {
+  width: fit-content;
+  min-height: 44px;
+  padding: 10px 16px;
+  color: #fff;
+  background: var(--public-green);
+  border: 0;
+  border-radius: 9px;
+  font-weight: 900;
+}
+.active-result-empty {
+  width: min(720px, 100%);
+  margin: 0 auto;
+  padding: 40px 22px;
+  background: #fff;
+  border: 1px solid #c8d2cc;
+  border-radius: 18px;
+  text-align: center;
+}
+.active-result-empty h2 {
+  margin: 0 0 7px;
+}
+.active-result-empty p {
+  color: var(--muted);
+}
+.active-result-empty button {
+  margin: 8px auto 0;
+}
 .material-empty {
   padding: 28px 12px;
 }
@@ -593,11 +724,12 @@
   .material-map-panel {
     grid-row: 2;
     position: relative;
-    height: 38vh;
-    min-height: 280px;
+    height: 48vh;
+    min-height: 330px;
+    max-height: 520px;
   }
   .material-map-panel .map-view {
-    min-height: 300px;
+    min-height: 330px;
   }
   .material-search-heading h1 {
     font-size: 31px;
@@ -642,6 +774,24 @@
   }
   .map-result-navigator > button span {
     display: none;
+  }
+  .active-result-section {
+    grid-row: 3;
+    padding: 14px 12px 90px;
+  }
+  .active-result-card {
+    grid-template-columns: 1fr;
+  }
+  .active-result-card > img,
+  .active-result-photo-empty {
+    height: min(64vw, 300px);
+    min-height: 220px;
+  }
+  .active-result-copy {
+    padding: 22px 18px 26px;
+  }
+  .active-result-copy dl {
+    grid-template-columns: 1fr 1fr;
   }
 }
 

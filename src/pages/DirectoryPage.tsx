@@ -93,6 +93,8 @@ export default function DirectoryPage({ slug }: { slug: string }) {
   );
   const [mapImage, setMapImage] = useState("");
   const photoSearchInput = useRef<HTMLInputElement>(null);
+  const resultButtons = useRef<Record<string, HTMLButtonElement | null>>({});
+  const navigatorTouchStart = useRef<number | null>(null);
 
   useEffect(() => {
     (async () => {
@@ -213,9 +215,30 @@ export default function DirectoryPage({ slug }: { slug: string }) {
   ]);
 
   const selected = records.find((item) => item.id === selectedId) || null;
+  const activeResultIndex = visibleRecords.findIndex(
+    (item) => item.id === selectedId,
+  );
+  const activeResult =
+    activeResultIndex >= 0 ? visibleRecords[activeResultIndex] : null;
+  const pinNumbers = useMemo(
+    () =>
+      Object.fromEntries(
+        visibleRecords.map((item, index) => [item.id, index + 1]),
+      ),
+    [visibleRecords],
+  );
   const selectedCollection = visibleCollections.find(
     (item) => item.id === selected?.collection_id,
   );
+
+  useEffect(() => {
+    if (!visibleRecords.length) {
+      setSelectedId(null);
+      return;
+    }
+    if (!visibleRecords.some((item) => item.id === selectedId))
+      setSelectedId(visibleRecords[0].id);
+  }, [visibleRecords, selectedId]);
 
   async function logSearch(
     searchType: "text" | "image" | "filter",
@@ -292,6 +315,29 @@ export default function DirectoryPage({ slug }: { slug: string }) {
     setSelectedId(id);
     setDetailOpen(true);
     setInventoryOpen(false);
+  }
+
+  function showResult(index: number) {
+    if (!visibleRecords.length) return;
+    const nextIndex = Math.min(visibleRecords.length - 1, Math.max(0, index));
+    const next = visibleRecords[nextIndex];
+    setSelectedId(next.id);
+    setDetailOpen(false);
+    if (window.matchMedia("(min-width: 851px)").matches)
+      window.requestAnimationFrame(() =>
+        resultButtons.current[next.id]?.scrollIntoView({
+          behavior: "smooth",
+          block: "nearest",
+        }),
+      );
+  }
+
+  function finishNavigatorSwipe(clientX: number) {
+    if (navigatorTouchStart.current === null) return;
+    const distance = clientX - navigatorTouchStart.current;
+    navigatorTouchStart.current = null;
+    if (Math.abs(distance) < 45) return;
+    showResult(activeResultIndex + (distance < 0 ? 1 : -1));
   }
 
   async function recordUse(event: React.FormEvent<HTMLFormElement>) {
@@ -528,6 +574,9 @@ export default function DirectoryPage({ slug }: { slug: string }) {
                     : "material-result-card"
                 }
                 key={item.id}
+                ref={(node) => {
+                  resultButtons.current[item.id] = node;
+                }}
                 onClick={() => openRecord(item.id)}
                 onMouseEnter={() => setSelectedId(item.id)}
                 onFocus={() => setSelectedId(item.id)}
@@ -576,14 +625,49 @@ export default function DirectoryPage({ slug }: { slug: string }) {
             organization={organization}
             mapImageUrl={mapImage}
             records={visibleRecords}
+            pinNumbers={pinNumbers}
             selectedId={selectedId}
             onSelect={openRecord}
             boundary={organization.boundary}
           />
-          <span className="map-count" aria-live="polite">
-            {visibleRecords.length}{" "}
-            {visibleRecords.length === 1 ? "pin" : "pins"} shown
-          </span>
+          {activeResult ? (
+            <div
+              className="map-result-navigator"
+              aria-live="polite"
+              onTouchStart={(event) => {
+                navigatorTouchStart.current = event.touches[0]?.clientX ?? null;
+              }}
+              onTouchEnd={(event) =>
+                finishNavigatorSwipe(event.changedTouches[0]?.clientX ?? 0)
+              }
+            >
+              <button
+                onClick={() => showResult(activeResultIndex - 1)}
+                disabled={activeResultIndex <= 0}
+                aria-label="Show previous result"
+              >
+                ← <span>Previous</span>
+              </button>
+              <div>
+                <small>
+                  RESULT {activeResultIndex + 1} OF {visibleRecords.length}
+                </small>
+                <b>{activeResult.name}</b>
+                <span>Swipe this card or use the buttons</span>
+              </div>
+              <button
+                onClick={() => showResult(activeResultIndex + 1)}
+                disabled={activeResultIndex >= visibleRecords.length - 1}
+                aria-label="Show next result"
+              >
+                <span>Next</span> →
+              </button>
+            </div>
+          ) : (
+            <span className="map-count" aria-live="polite">
+              No matching pins
+            </span>
+          )}
         </section>
       </main>
 

@@ -14,6 +14,7 @@ type Props = {
   >;
   mapImageUrl?: string;
   records?: RecordItem[];
+  pinNumbers?: Record<string, number>;
   boundary?: [number, number][];
   selectedId?: string | null;
   markerLatitude?: number;

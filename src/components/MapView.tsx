@@ -6,6 +6,7 @@ type Props = {
   longitude: number;
   zoom: number;
   records?: RecordItem[];
+  pinNumbers?: Record<string, number>;
   selectedId?: string | null;
   boundary?: [number, number][];
   markerLatitude?: number;
@@ -30,6 +31,7 @@ export default function MapView({
   longitude,
   zoom,
   records = [],
+  pinNumbers = {},
   selectedId,
   boundary = [],
   markerLatitude,
@@ -239,9 +241,35 @@ export default function MapView({
         return [];
       const node = document.createElement("button");
       node.className = `map-pin ${record.id === selectedId ? "selected" : ""}`;
-      node.textContent = String(index + 1);
-      node.title = `${index + 1}. ${record.name}`;
-      node.setAttribute("aria-label", `${index + 1}. ${record.name}`);
+      const pinNumber = pinNumbers[record.id] ?? index + 1;
+      const number = document.createElement("span");
+      number.className = "pin-number";
+      number.textContent = String(pinNumber);
+      const preview = document.createElement("span");
+      preview.className = "map-pin-preview";
+      const previewName = document.createElement("b");
+      previewName.textContent = record.name;
+      const previewDetail = document.createElement("small");
+      const location = String(
+        record.data.location ||
+          record.data.location_code ||
+          record.data.storage_location ||
+          record.data.bin ||
+          "",
+      ).trim();
+      previewDetail.textContent = [
+        record.category,
+        record.quantity === null
+          ? ""
+          : `${record.quantity}${record.unit ? ` ${record.unit}` : ""}`,
+        location,
+      ]
+        .filter(Boolean)
+        .join(" · ");
+      preview.append(previewName, previewDetail);
+      node.append(number, preview);
+      node.title = `${pinNumber}. ${record.name}`;
+      node.setAttribute("aria-label", `${pinNumber}. ${record.name}`);
       node.onclick = () => callbacks.current.onSelect?.(record.id);
       return [
         new window.maplibregl.Marker({ element: node })
@@ -249,7 +277,17 @@ export default function MapView({
           .addTo(map.current),
       ];
     });
-  }, [records, selectedId]);
+    const activeRecord = records.find((record) => record.id === selectedId);
+    if (activeRecord) {
+      const activeLatitude = Number(activeRecord.latitude);
+      const activeLongitude = Number(activeRecord.longitude);
+      if (Number.isFinite(activeLatitude) && Number.isFinite(activeLongitude))
+        map.current.easeTo({
+          center: [activeLongitude, activeLatitude],
+          duration: 450,
+        });
+    }
+  }, [records, selectedId, pinNumbers]);
 
   useEffect(() => {
     if (!map.current) return;

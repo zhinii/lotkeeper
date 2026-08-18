@@ -8,6 +8,7 @@ type Props = {
   gridColumns?: number;
   label?: string;
   records?: RecordItem[];
+  pinNumbers?: Record<string, number>;
   selectedId?: string | null;
   boundary?: [number, number][];
   markerLatitude?: number;
@@ -36,6 +37,7 @@ export default function PlanMapView({
   gridColumns = 10,
   label = "Site plan",
   records = [],
+  pinNumbers = {},
   selectedId,
   boundary = [],
   markerLatitude,
@@ -117,25 +119,49 @@ export default function PlanMapView({
           style={{ left: `${percentage(lng)}%`, top: `${percentage(lat)}%` }}
         />
       ))}
-      {records.map((record, index) => (
-        <button
+      {records.map((record, index) => {
+        const pinNumber = pinNumbers[record.id] ?? index + 1;
+        const location = String(
+          record.data.location ||
+            record.data.location_code ||
+            record.data.storage_location ||
+            record.data.bin ||
+            "",
+        ).trim();
+        return (
+          <button
           type="button"
           className={`plan-record-pin map-pin ${record.id === selectedId ? "selected" : ""}`}
           style={{
             left: `${percentage(record.longitude)}%`,
             top: `${percentage(record.latitude)}%`,
           }}
-          title={`${index + 1}. ${record.name}`}
-          aria-label={`${index + 1}. ${record.name}`}
+          title={`${pinNumber}. ${record.name}`}
+          aria-label={`${pinNumber}. ${record.name}`}
           key={record.id}
           onClick={(event) => {
             event.stopPropagation();
             onSelect?.(record.id);
           }}
         >
-          {index + 1}
-        </button>
-      ))}
+            <span className="pin-number">{pinNumber}</span>
+            <span className="map-pin-preview">
+              <b>{record.name}</b>
+              <small>
+                {[
+                  record.category,
+                  record.quantity === null
+                    ? ""
+                    : `${record.quantity}${record.unit ? ` ${record.unit}` : ""}`,
+                  location,
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
+              </small>
+            </span>
+          </button>
+        );
+      })}
       {(showMarker || picker || boundaryEditor) && (
         <span
           className="location-pin plan-location-pin"

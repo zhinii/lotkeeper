@@ -161,7 +161,15 @@ test("public browsing combines image, text and filter search with the map", asyn
   assert.match(directory, /roleLabel/);
   assert.match(directory, /className="floating-add"/);
   assert.match(directory, /<strong>Add item<\/strong>/);
-  assert.match(directory, /pins"\} shown|pins.*shown/s);
+  assert.match(directory, /map-result-navigator/);
+  assert.match(directory, /RESULT \{activeResultIndex \+ 1\} OF/);
+  assert.match(directory, /Show previous result/);
+  assert.match(directory, /Show next result/);
+  assert.match(directory, /records=\{visibleRecords\}/);
+  assert.match(directory, /pinNumbers=\{pinNumbers\}/);
+  assert.match(styles, /\.directory-page \.map-pin[\s\S]*opacity:\s*0\.42/);
+  assert.match(styles, /\.directory-page \.map-pin\.selected[\s\S]*opacity:\s*1/);
+  assert.match(styles, /\.map-pin-preview/);
   assert.match(directory, /Every result number matches its pin on the map/);
   assert.match(directory, /result-index/);
   assert.match(directory, /NUMBERED TO MATCH THE MAP/);

@@ -25,6 +25,8 @@ function sku(item: RecordItem) {
   return String(item.data.sku || item.data.asset_id || "—");
 }
 
+type InventoryEventKind = "sold" | "used" | "added" | "counted";
+
 export default function InventoryPage({ slug }: { slug: string }) {
   const [organization, setOrganization] = useState<Organization | null>(null);
   const [membership, setMembership] = useState<OrganizationMembership | null>(
@@ -35,16 +37,20 @@ export default function InventoryPage({ slug }: { slug: string }) {
   );
   const [records, setRecords] = useState<RecordItem[]>([]);
   const [transactions, setTransactions] = useState<InventoryTransaction[]>([]);
+  const [salesReady, setSalesReady] = useState(false);
   const [collectionId, setCollectionId] = useState("");
   const [category, setCategory] = useState("all");
   const [query, setQuery] = useState("");
   const [adjusting, setAdjusting] = useState<RecordItem | null>(null);
+  const [adjustEventKind, setAdjustEventKind] =
+    useState<InventoryEventKind>("used");
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(true);
 
   async function loadInventory(org: Organization, access: MemberPermissions) {
     const client = requireSupabase();
-    const [recordRows, privateRows, transactionRows] = await Promise.all([
+    const [recordRows, privateRows, transactionRows, salesCapability] =
+      await Promise.all([
       client
         .from("records")
         .select("*")
@@ -65,10 +71,14 @@ export default function InventoryPage({ slug }: { slug: string }) {
             .order("created_at", { ascending: false })
             .limit(40)
         : Promise.resolve({ data: [], error: null }),
+      access.viewInventory
+        ? client.from("inventory_transactions").select("counterparty").limit(1)
+        : Promise.resolve({ data: [], error: null }),
     ]);
     if (recordRows.error) setMessage(recordRows.error.message);
     if (privateRows.error) setMessage(privateRows.error.message);
     if (transactionRows.error) setMessage(transactionRows.error.message);
+    setSalesReady(!salesCapability.error);
     const privateByRecord = new Map(
       (privateRows.data || []).map((row) => [
         row.record_id,
@@ -176,16 +186,35 @@ export default function InventoryPage({ slug }: { slug: string }) {
     event.preventDefault();
     if (!adjusting || !organization || !permissions?.adjustInventory) return;
     const form = new FormData(event.currentTarget);
-    const { error } = await requireSupabase().rpc("adjust_inventory", {
+    const request: Record<string, unknown> = {
       target_record: adjusting.id,
       quantity_value: Number(form.get("quantity")),
       event_kind: String(form.get("event_kind")),
       note_text: String(form.get("note") || ""),
-    });
+    };
+    if (salesReady) {
+      request.counterparty_text = String(form.get("counterparty") || "");
+      request.reference_text = String(form.get("reference") || "");
+    }
+    const { error } = await requireSupabase().rpc(
+      "adjust_inventory",
+      request,
+    );
     if (error) return setMessage(error.message);
+    const wasSale = adjustEventKind === "sold";
     setAdjusting(null);
-    setMessage("Inventory updated and added to the activity history.");
+    setMessage(
+      wasSale
+        ? "Sale recorded. Inventory and activity history are updated."
+        : "Inventory updated and added to the activity history.",
+    );
     await loadInventory(organization, permissions);
+  }
+
+  function openAdjustment(item: RecordItem, kind: InventoryEventKind) {
+    setAdjustEventKind(kind);
+    setAdjusting(item);
+    setMessage("");
   }
 
   if (loading) return <div className="loading-screen">Loading inventory…</div>;
@@ -344,11 +373,22 @@ export default function InventoryPage({ slug }: { slug: string }) {
                   >
                     {item.quantity} <small>{item.unit}</small>
                   </output>
-                  <span>
+                  <span className="inventory-row-actions">
                     {permissions.adjustInventory ? (
-                      <button onClick={() => setAdjusting(item)}>
-                        Update stock
-                      </button>
+                      <>
+                        {salesReady && (
+                          <button
+                            className="sale-button"
+                            disabled={Number(item.quantity) <= 0}
+                            onClick={() => openAdjustment(item, "sold")}
+                          >
+                            Record sale
+                          </button>
+                        )}
+                        <button onClick={() => openAdjustment(item, "used")}>
+                          Update stock
+                        </button>
+                      </>
                     ) : (
                       <button onClick={() => navigate(`org/${slug}`)}>
                         View
@@ -381,10 +421,19 @@ export default function InventoryPage({ slug }: { slug: string }) {
                   <span>
                     <b>{record?.name || "Inventory item"}</b>
                     <small>
-                      {item.event_type} · {item.quantity}
+                      {item.event_type === "sold" ? "Sold" : item.event_type} ·{" "}
+                      {item.quantity}
                       {record?.unit ? ` ${record.unit}` : ""} ·{" "}
                       {item.actor_name || "Team member"}
                     </small>
+                    {item.event_type === "sold" && item.counterparty && (
+                      <small>
+                        To {item.counterparty}
+                        {item.reference_code
+                          ? ` · ${item.reference_code}`
+                          : ""}
+                      </small>
+                    )}
                   </span>
                   <span>
                     <b>{item.after_quantity ?? "—"}</b>
@@ -409,14 +458,23 @@ export default function InventoryPage({ slug }: { slug: string }) {
             >
               ×
             </button>
-            <small>UPDATE INVENTORY</small>
+            <small>
+              {adjustEventKind === "sold" ? "RECORD SALE" : "UPDATE INVENTORY"}
+            </small>
             <h2>{adjusting.name}</h2>
             <p>
               Currently {adjusting.quantity} {adjusting.unit}
             </p>
             <label>
               What changed?
-              <select name="event_kind" defaultValue="used">
+              <select
+                name="event_kind"
+                value={adjustEventKind}
+                onChange={(event) =>
+                  setAdjustEventKind(event.target.value as InventoryEventKind)
+                }
+              >
+                <option value="sold">Item was sold</option>
                 <option value="used">Stock was used or removed</option>
                 <option value="added">Stock was received or returned</option>
                 <option value="counted">Set the exact counted quantity</option>
@@ -432,6 +490,25 @@ export default function InventoryPage({ slug }: { slug: string }) {
                 required
               />
             </label>
+            {adjustEventKind === "sold" && (
+              <div className="sale-details">
+                <label>
+                  Sold to / customer or job
+                  <input
+                    name="counterparty"
+                    placeholder="Customer, company, project, or job"
+                    required
+                  />
+                </label>
+                <label>
+                  Order or invoice reference
+                  <input
+                    name="reference"
+                    placeholder="Optional order, invoice, or receipt number"
+                  />
+                </label>
+              </div>
+            )}
             <label>
               Note
               <input
@@ -439,7 +516,11 @@ export default function InventoryPage({ slug }: { slug: string }) {
                 placeholder="Job, order, delivery, or reason"
               />
             </label>
-            <button className="save-button">Save inventory change</button>
+            <button className="save-button">
+              {adjustEventKind === "sold"
+                ? "Record sale and update stock"
+                : "Save inventory change"}
+            </button>
           </form>
         </div>
       )}

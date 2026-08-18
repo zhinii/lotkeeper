@@ -10,8 +10,8 @@ The homepage explains the product. **Open a site** leads to the available public
 
 Each site has two focused work areas:
 
-- **Visual finder:** McMaster-Carr-style text, photo, and filter search beside a map. Results are image-heavy and open detailed item cards with the matching location.
-- **Inventory tracker:** a separate category-first workspace for SKU, location, on-hand quantity, low/out-of-stock status, received/used/count adjustments, and recent activity. Keeping this separate prevents operational inventory controls from cluttering the finder.
+- **Visual finder:** McMaster-Carr-style text, photo, and filter search directly beside a map. Every result and pin shares the same number, making the item-to-location relationship clear at a glance.
+- **Inventory tracker:** a separate category-first workspace for SKU, location, on-hand quantity, low/out-of-stock status, received/used/count adjustments, lightweight sale recording, and recent activity. Keeping this separate prevents operational inventory controls from cluttering the finder.
 
 ## Four access levels
 
@@ -49,7 +49,9 @@ AI never publishes an item, approves a submission, or changes inventory. Employe
 
 Standard records support name, description, category, photo, quantity, unit, SKU/asset ID, named location, map position, visibility, timestamps, and updater. Organization-specific fields are stored as JSON configuration and values, so adding a field does not require a new SQL column.
 
-Inventory changes use a database function that records received, used, and counted quantities with before/after values, the signed-in person, a note, timestamp, and an administrator alert.
+Inventory changes use a database function that records received, used, counted, and sold quantities with before/after values, the signed-in person, a note, timestamp, and an administrator alert. A sale also records the customer/company/job and optional order or invoice reference, prevents overselling, and reduces the on-hand quantity atomically.
+
+This is intentionally a **sale-recording workflow, not payment processing**. Material Pin does not yet calculate tax, take card payments, issue fiscal receipts, manage a cash drawer, or replace accounting software. Those should only be added after real checkout requirements and integrations are defined.
 
 CSV import recognizes `name`, `description`, `sku`, `quantity`, `unit`, `category`, `location`, `latitude`, `longitude`, `public`, `keywords`, `manufacturer`, `condition`, and `serial`.
 
@@ -70,6 +72,7 @@ Run migrations in filename order. The current upgrade is:
 
 ```text
 supabase/migrations/20260818_roles_inventory_site_maps.sql
+supabase/migrations/20260818_inventory_sales.sql
 ```
 
 Then redeploy both Edge Functions because user management now stores roles and permissions:

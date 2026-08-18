@@ -117,7 +117,7 @@ export default function PlanMapView({
           style={{ left: `${percentage(lng)}%`, top: `${percentage(lat)}%` }}
         />
       ))}
-      {records.map((record) => (
+      {records.map((record, index) => (
         <button
           type="button"
           className={`plan-record-pin map-pin ${record.id === selectedId ? "selected" : ""}`}
@@ -125,14 +125,16 @@ export default function PlanMapView({
             left: `${percentage(record.longitude)}%`,
             top: `${percentage(record.latitude)}%`,
           }}
-          title={record.name}
-          aria-label={record.name}
+          title={`${index + 1}. ${record.name}`}
+          aria-label={`${index + 1}. ${record.name}`}
           key={record.id}
           onClick={(event) => {
             event.stopPropagation();
             onSelect?.(record.id);
           }}
-        />
+        >
+          {index + 1}
+        </button>
       ))}
       {(showMarker || picker || boundaryEditor) && (
         <span

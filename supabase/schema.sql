@@ -117,11 +117,13 @@ create table public.inventory_transactions (
   record_id uuid not null references public.records(id) on delete cascade,
   user_id uuid not null references auth.users(id),
   actor_name text not null default 'Team member',
-  event_type text not null check (event_type in ('used','removed','added','counted','moved')),
+  event_type text not null check (event_type in ('used','removed','added','counted','moved','sold')),
   quantity numeric not null,
   before_quantity numeric,
   after_quantity numeric,
   note text,
+  counterparty text,
+  reference_code text,
   created_at timestamptz not null default now()
 );
 
@@ -309,18 +311,29 @@ as $$ declare new_id uuid; begin
   return new_id;
 end $$;
 
-create or replace function public.adjust_inventory(target_record uuid, quantity_value numeric, event_kind text, note_text text default '')
+create or replace function public.adjust_inventory(
+  target_record uuid,
+  quantity_value numeric,
+  event_kind text,
+  note_text text default '',
+  counterparty_text text default '',
+  reference_text text default ''
+)
 returns numeric language plpgsql security definer set search_path=public
 as $$ declare r public.records; after_amount numeric; changed_amount numeric; begin
   select * into r from public.records where id=target_record for update;
   if r.id is null or not public.member_has_permission(r.organization_id,'adjustInventory') then raise exception 'Inventory adjustment permission required'; end if;
-  if event_kind not in ('added','used','counted') then raise exception 'Choose received, used, or counted'; end if;
+  if event_kind not in ('added','used','counted','sold') then raise exception 'Choose received, used, sold, or counted'; end if;
   if quantity_value<0 or (event_kind<>'counted' and quantity_value=0) then raise exception 'Enter a valid quantity'; end if;
+  if event_kind='sold' and trim(coalesce(counterparty_text,''))='' then raise exception 'Enter who the item was sold to'; end if;
+  if event_kind='sold' and quantity_value>coalesce(r.quantity,0) then raise exception 'Not enough inventory is available for this sale'; end if;
   if event_kind='counted' then after_amount:=quantity_value; elsif event_kind='added' then after_amount:=coalesce(r.quantity,0)+quantity_value; else after_amount:=greatest(0,coalesce(r.quantity,0)-quantity_value); end if;
   changed_amount:=case when event_kind='counted' then abs(after_amount-coalesce(r.quantity,0)) else quantity_value end;
-  insert into public.inventory_transactions(organization_id,record_id,user_id,actor_name,event_type,quantity,before_quantity,after_quantity,note) values(r.organization_id,r.id,auth.uid(),coalesce(auth.jwt()->>'email','Team member'),event_kind,changed_amount,r.quantity,after_amount,nullif(trim(note_text),''));
+  insert into public.inventory_transactions(organization_id,record_id,user_id,actor_name,event_type,quantity,before_quantity,after_quantity,note,counterparty,reference_code)
+  values(r.organization_id,r.id,auth.uid(),coalesce(auth.jwt()->>'email','Team member'),event_kind,changed_amount,r.quantity,after_amount,nullif(trim(note_text),''),case when event_kind='sold' then nullif(trim(counterparty_text),'') end,case when event_kind='sold' then nullif(trim(reference_text),'') end);
   update public.records set quantity=after_amount,updated_at=now(),updated_by=auth.uid(),version=version+1 where id=r.id;
-  insert into public.alerts(organization_id,alert_type,title,detail,record_id) values(r.organization_id,'inventory_'||event_kind,'Inventory updated: '||r.name,event_kind||' · '||quantity_value||coalesce(' '||r.unit,'')||case when trim(note_text)='' then '' else ' · '||trim(note_text) end,r.id);
+  insert into public.alerts(organization_id,alert_type,title,detail,record_id)
+  values(r.organization_id,'inventory_'||event_kind,case when event_kind='sold' then 'Inventory sold: ' else 'Inventory updated: ' end||r.name,event_kind||' · '||quantity_value||coalesce(' '||r.unit,'')||case when event_kind='sold' then ' · Sold to '||trim(counterparty_text) else '' end||case when trim(reference_text)='' then '' else ' · '||trim(reference_text) end||case when trim(note_text)='' then '' else ' · '||trim(note_text) end,r.id);
   return after_amount;
 end $$;
 

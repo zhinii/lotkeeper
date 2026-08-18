@@ -354,11 +354,11 @@ export default function DirectoryPage({ slug }: { slug: string }) {
       </AppHeader>
 
       <main className="material-workspace">
-        <section className="material-search-panel">
+        <section className="finder-toolbar" aria-label="Find items">
           <div className="material-search-heading">
             <small>FIND MATERIALS AND ASSETS</small>
             <h1>Search this site</h1>
-            <p>Use words, a photo, or narrow the catalog with filters.</p>
+            <p>Every result number matches its pin on the map.</p>
           </div>
           <label className="material-text-search">
             <span>Text search</span>
@@ -429,81 +429,98 @@ export default function DirectoryPage({ slug }: { slug: string }) {
               </span>
             )}
           </div>
-
-          <div className="catalog-filters">
-            <div className="filter-title">
-              <b>Narrow results</b>
-              <button onClick={clearSearch}>Clear all</button>
+          <details className="filter-drawer">
+            <summary>
+              Filters
+              <span>Group, category, availability, and location</span>
+            </summary>
+            <div className="catalog-filters">
+              <div className="filter-title">
+                <b>Narrow results</b>
+                <button onClick={clearSearch}>Clear all</button>
+              </div>
+              <label>
+                Item group
+                <select
+                  value={collection}
+                  onChange={(event) => {
+                    setCollection(event.target.value);
+                    void logSearch("filter");
+                  }}
+                >
+                  <option value="all">All item groups</option>
+                  {visibleCollections.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Category
+                <select
+                  value={category}
+                  onChange={(event) => {
+                    setCategory(event.target.value);
+                    void logSearch("filter");
+                  }}
+                >
+                  <option value="all">All categories</option>
+                  {categories.map((item) => (
+                    <option key={item}>{item}</option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Availability
+                <select
+                  value={availability}
+                  onChange={(event) => {
+                    setAvailability(event.target.value as AvailabilityFilter);
+                    void logSearch("filter");
+                  }}
+                >
+                  <option value="all">Any availability</option>
+                  <option value="available">Available</option>
+                  <option value="empty">Out of stock</option>
+                  <option value="untracked">Not quantity tracked</option>
+                </select>
+              </label>
+              <label>
+                Named location
+                <select
+                  value={locationFilter}
+                  onChange={(event) => {
+                    setLocationFilter(event.target.value);
+                    void logSearch("filter");
+                  }}
+                >
+                  <option value="all">All locations</option>
+                  {locations.map((item) => (
+                    <option key={item}>{item}</option>
+                  ))}
+                </select>
+              </label>
             </div>
-            <label>
-              Item group
-              <select
-                value={collection}
-                onChange={(event) => {
-                  setCollection(event.target.value);
-                  void logSearch("filter");
-                }}
-              >
-                <option value="all">All item groups</option>
-                {visibleCollections.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              Category
-              <select
-                value={category}
-                onChange={(event) => {
-                  setCategory(event.target.value);
-                  void logSearch("filter");
-                }}
-              >
-                <option value="all">All categories</option>
-                {categories.map((item) => (
-                  <option key={item}>{item}</option>
-                ))}
-              </select>
-            </label>
-            <label>
-              Availability
-              <select
-                value={availability}
-                onChange={(event) => {
-                  setAvailability(event.target.value as AvailabilityFilter);
-                  void logSearch("filter");
-                }}
-              >
-                <option value="all">Any availability</option>
-                <option value="available">Available</option>
-                <option value="empty">Out of stock</option>
-                <option value="untracked">Not quantity tracked</option>
-              </select>
-            </label>
-            <label>
-              Named location
-              <select
-                value={locationFilter}
-                onChange={(event) => {
-                  setLocationFilter(event.target.value);
-                  void logSearch("filter");
-                }}
-              >
-                <option value="all">All locations</option>
-                {locations.map((item) => (
-                  <option key={item}>{item}</option>
-                ))}
-              </select>
-            </label>
-          </div>
+          </details>
+        </section>
 
+        <section className="material-search-panel finder-results-panel">
           <div className="material-results-heading">
-            <h2>{visibleRecords.length} results</h2>
+            <div>
+              <small>NUMBERED TO MATCH THE MAP</small>
+              <h2>{visibleRecords.length} results</h2>
+            </div>
+            {(query ||
+              collection !== "all" ||
+              category !== "all" ||
+              availability !== "all" ||
+              locationFilter !== "all") && (
+              <button onClick={clearSearch}>Clear</button>
+            )}
           </div>
           <div className="material-result-list">
-            {visibleRecords.map((item) => (
+            {visibleRecords.map((item, index) => (
               <button
                 className={
                   selectedId === item.id
@@ -512,14 +529,21 @@ export default function DirectoryPage({ slug }: { slug: string }) {
                 }
                 key={item.id}
                 onClick={() => openRecord(item.id)}
+                onMouseEnter={() => setSelectedId(item.id)}
+                onFocus={() => setSelectedId(item.id)}
               >
-                {item.photo_path ? (
-                  <img src={publicPhoto(item.photo_path)} alt="" />
-                ) : (
-                  <span className="generic-pin" aria-hidden="true">
-                    ●
-                  </span>
-                )}
+                <span className="result-thumb">
+                  <b className="result-index" aria-hidden="true">
+                    {index + 1}
+                  </b>
+                  {item.photo_path ? (
+                    <img src={publicPhoto(item.photo_path)} alt="" />
+                  ) : (
+                    <span className="generic-pin" aria-hidden="true">
+                      ●
+                    </span>
+                  )}
+                </span>
                 <span className="result-copy">
                   <small>{item.category}</small>
                   <strong>{item.name}</strong>

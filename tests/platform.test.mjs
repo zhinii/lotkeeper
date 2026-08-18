@@ -162,6 +162,12 @@ test("public browsing combines image, text and filter search with the map", asyn
   assert.match(directory, /className="floating-add"/);
   assert.match(directory, /<strong>Add item<\/strong>/);
   assert.match(directory, /pins"\} shown|pins.*shown/s);
+  assert.match(directory, /Every result number matches its pin on the map/);
+  assert.match(directory, /result-index/);
+  assert.match(directory, /NUMBERED TO MATCH THE MAP/);
+  assert.match(directory, /onMouseEnter=\{\(\) => setSelectedId\(item\.id\)\}/);
+  assert.match(styles, /\.finder-toolbar/);
+  assert.match(styles, /\.finder-results-panel/);
   assert.match(styles, /\.material-map-panel \.map-count[\s\S]*bottom:\s*auto/);
   assert.match(styles, /\.app-header-actions button\.active/);
 });
@@ -235,8 +241,29 @@ test("inventory tracker is separate, searchable, and audited", async () => {
   assert.match(inventory, /Find inventory/);
   assert.match(inventory, /Recent inventory activity/);
   assert.match(inventory, /Stock was received or returned/);
+  assert.match(inventory, /Record sale/);
+  assert.match(inventory, /Sold to \/ customer or job/);
+  assert.match(inventory, /counterparty_text/);
+  assert.match(inventory, /salesReady/);
+  assert.match(inventory, /select\("counterparty"\)/);
   assert.match(schema, /create or replace function public\.adjust_inventory/);
   assert.match(schema, /actor_name/);
+  assert.match(schema, /event_type in \('used','removed','added','counted','moved','sold'\)/);
+  assert.match(schema, /Not enough inventory is available for this sale/);
+  assert.match(schema, /counterparty/);
+  assert.match(schema, /reference_code/);
+});
+
+test("inventory sales migration updates stock and keeps an audit trail", async () => {
+  const migration = await read(
+    "supabase/migrations/20260818_inventory_sales.sql",
+  );
+  assert.match(migration, /event_kind='sold'/);
+  assert.match(migration, /quantity_value>coalesce\(r\.quantity,0\)/);
+  assert.match(migration, /Inventory sold:/);
+  assert.match(migration, /counterparty_text/);
+  assert.match(migration, /reference_text/);
+  assert.match(migration, /notify pgrst, 'reload schema'/);
 });
 
 test("sites can use GPS, uploaded plans, or generated grids", async () => {

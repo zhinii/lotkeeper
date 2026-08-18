@@ -225,7 +225,7 @@ export default function MapView({
   useEffect(() => {
     if (!map.current) return;
     markers.current.forEach((marker) => marker.remove());
-    markers.current = records.flatMap((record) => {
+    markers.current = records.flatMap((record, index) => {
       const recordLatitude = Number(record.latitude);
       const recordLongitude = Number(record.longitude);
       if (
@@ -239,7 +239,9 @@ export default function MapView({
         return [];
       const node = document.createElement("button");
       node.className = `map-pin ${record.id === selectedId ? "selected" : ""}`;
-      node.title = record.name;
+      node.textContent = String(index + 1);
+      node.title = `${index + 1}. ${record.name}`;
+      node.setAttribute("aria-label", `${index + 1}. ${record.name}`);
       node.onclick = () => callbacks.current.onSelect?.(record.id);
       return [
         new window.maplibregl.Marker({ element: node })

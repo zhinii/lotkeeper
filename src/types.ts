@@ -155,10 +155,12 @@ export type InventoryTransaction = {
   record_id: string;
   user_id: string;
   actor_name: string;
-  event_type: "used" | "removed" | "added" | "counted" | "moved";
+  event_type: "used" | "removed" | "added" | "counted" | "moved" | "sold";
   quantity: number;
   before_quantity: number | null;
   after_quantity: number | null;
   note: string | null;
+  counterparty: string | null;
+  reference_code: string | null;
   created_at: string;
 };

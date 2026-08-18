@@ -3,6 +3,23 @@
 export type OrganizationMode = "material" | "civic" | "commercial";
 export type LocationSource = "photo_exif" | "browser_gps" | "manual_pin";
 export type FieldType = "text" | "number" | "date" | "boolean";
+export type MapMode = "gps" | "image" | "grid";
+export type MemberRole = "admin" | "employee" | "viewer" | "staff";
+
+export type MemberPermissions = {
+  viewPrivate: boolean;
+  viewInventory: boolean;
+  addItems: boolean;
+  updateItems: boolean;
+  adjustInventory: boolean;
+};
+
+export type OrganizationMembership = {
+  organization_id: string;
+  user_id?: string;
+  role: MemberRole;
+  permissions: Partial<MemberPermissions> | null;
+};
 
 export type FieldDefinition = {
   key: string;
@@ -34,6 +51,13 @@ export type Organization = {
   center_lng: number;
   map_zoom: number;
   boundary: [number, number][];
+  map_mode: MapMode;
+  map_image_path: string | null;
+  map_config: {
+    gridRows?: number;
+    gridColumns?: number;
+    label?: string;
+  };
   collections: CollectionDefinition[];
   ai_enabled: boolean;
   ai_catalog_context: string;
@@ -122,5 +146,19 @@ export type SearchEvent = {
   filters: Record<string, unknown>;
   result_count: number;
   opened_record_id: string | null;
+  created_at: string;
+};
+
+export type InventoryTransaction = {
+  id: string;
+  organization_id: string;
+  record_id: string;
+  user_id: string;
+  actor_name: string;
+  event_type: "used" | "removed" | "added" | "counted" | "moved";
+  quantity: number;
+  before_quantity: number | null;
+  after_quantity: number | null;
+  note: string | null;
   created_at: string;
 };

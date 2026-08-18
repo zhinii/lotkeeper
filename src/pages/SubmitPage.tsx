@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { gps as readGps, parse as readExif } from "exifr";
-import MapView from "../components/MapView";
+import SiteMapView from "../components/SiteMapView";
 import PhotoCropper, {
   cropPhoto,
   defaultCrop,
@@ -16,7 +16,8 @@ import {
   type CommercialCaptureKey,
 } from "../lib/captureFields";
 import { navigate } from "../lib/route";
-import { publicPhoto, requireSupabase } from "../lib/supabase";
+import { permissionsFor } from "../lib/permissions";
+import { publicPhoto, requireSupabase, siteMapUrl } from "../lib/supabase";
 import type {
   LocationSource,
   Organization,
@@ -275,6 +276,7 @@ export default function SubmitPage({
   const [status, setStatus] = useState("");
   const [sending, setSending] = useState(false);
   const [isMember, setIsMember] = useState(false);
+  const [mapImage, setMapImage] = useState("");
   const [publicVisible, setPublicVisible] = useState(true);
   const [preparing, setPreparing] = useState(false);
   const [analysisState, setAnalysisState] = useState<AnalysisState>("idle");
@@ -312,6 +314,8 @@ export default function SubmitPage({
         collections: normalizeCollections(rawOrganization.collections || []),
       };
       setOrganization(organizationData);
+      if (organizationData.map_image_path)
+        void siteMapUrl(organizationData.map_image_path).then(setMapImage);
       const { data: user } = await client.auth.getUser();
       if (!user.user) {
         setStatus("Employee sign-in is required to add or update items.");
@@ -319,15 +323,32 @@ export default function SubmitPage({
       }
       const { data: memberships } = await client
         .from("organization_members")
-        .select("organization_id")
-        .eq("organization_id", organizationData.id);
-      if (!memberships?.length) {
-        setStatus("Your account is not assigned to this organization.");
+        .select("organization_id,user_id,role,permissions")
+        .eq("organization_id", organizationData.id)
+        .eq("user_id", user.user.id)
+        .maybeSingle();
+      const { data: platformRows } = await client
+        .from("platform_admins")
+        .select("user_id")
+        .limit(1);
+      const membership = platformRows?.length
+        ? { role: "admin" as const, permissions: {} }
+        : memberships;
+      const access = permissionsFor(membership as any);
+      const allowed = recordId ? access.updateItems : access.addItems;
+      if (!membership || !allowed) {
+        setStatus(
+          recordId
+            ? "Your site permissions do not allow item updates."
+            : "Your site permissions do not allow new items.",
+        );
         return;
       }
       setIsMember(true);
       const first = organizationData.collections[0];
       setCollectionId(first?.id || "");
+      if (organizationData.map_mode !== "gps" && !recordId)
+        setPoint({ lat: 50, lng: 50, accuracy: null, source: "manual_pin" });
 
       if (!recordId) return;
       const { data } = await client
@@ -486,6 +507,7 @@ export default function SubmitPage({
           body: {
             organization_id: organization.id,
             image_data_url: preparedPhoto.analysisDataUrl,
+            submission_type: recordId ? "update" : "new",
           },
         },
       );
@@ -521,6 +543,22 @@ export default function SubmitPage({
     file: File,
     fallbackLocation: Promise<Point | null>,
   ) {
+    if (organization?.map_mode !== "gps") {
+      const captured = new Date(file.lastModified);
+      setPhotoTakenAt(
+        file.lastModified > 0 && !Number.isNaN(captured.getTime())
+          ? captured.toISOString()
+          : new Date().toISOString(),
+      );
+      const planPoint = point || {
+        lat: 50,
+        lng: 50,
+        accuracy: null,
+        source: "manual_pin" as LocationSource,
+      };
+      setPoint(planPoint);
+      return planPoint;
+    }
     const [coordinates, metadata] = await Promise.all([
       readGps(file).catch(() => null),
       readExif(file, [
@@ -578,7 +616,11 @@ export default function SubmitPage({
     setPhoto(null);
     setPreparedPhoto(null);
     setPhotoTakenAt(null);
-    setPoint(null);
+    setPoint(
+      organization.map_mode === "gps"
+        ? null
+        : point || { lat: 50, lng: 50, accuracy: null, source: "manual_pin" },
+    );
     setAiSuggestions(null);
     setAnalysisState("idle");
     setDetailsEntryMode("choice");
@@ -661,10 +703,13 @@ export default function SubmitPage({
       );
       return;
     }
+    const requiresGps = organization?.map_mode === "gps";
     setStatus(
-      "Opening the camera and getting the most accurate GPS fix available…",
+      requiresGps
+        ? "Opening the camera and getting the most accurate GPS fix available…"
+        : "Opening the camera. You will place the item on the site plan after the photo.",
     );
-    startMobileLocationTracking();
+    if (requiresGps) startMobileLocationTracking();
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: { ideal: "environment" } },
@@ -672,7 +717,9 @@ export default function SubmitPage({
       });
       setCameraStream(stream);
       setStatus(
-        "Camera ready. GPS is refining in the background; the shutter will unlock when the fix is precise.",
+        requiresGps
+          ? "Camera ready. GPS is refining in the background; the shutter will unlock when the fix is precise."
+          : "Camera ready. Take the photo, then confirm its position on the site plan.",
       );
     } catch {
       stopMobileLocationTracking();
@@ -689,8 +736,16 @@ export default function SubmitPage({
       setStatus("The camera is still starting. Wait a moment and try again.");
       return;
     }
-    const captureLocation = mobileBestPoint.current;
-    if (!usableMobileGps(captureLocation)) {
+    const requiresGps = organization?.map_mode === "gps";
+    const captureLocation = requiresGps
+      ? mobileBestPoint.current
+      : point || {
+          lat: 50,
+          lng: 50,
+          accuracy: null,
+          source: "manual_pin" as LocationSource,
+        };
+    if (requiresGps && !usableMobileGps(captureLocation)) {
       setStatus(
         `Wait for GPS accuracy of ±${MOBILE_REQUIRED_ACCURACY_METERS} m or better before taking the photo.`,
       );
@@ -768,13 +823,15 @@ export default function SubmitPage({
       return;
     }
     setStatus(
-      mapped
-        ? mapped.source === "photo_exif"
-          ? "Photo location found. Review the pin before submitting."
-          : "Current location captured. Review the pin before submitting."
-        : mobileDevice
-          ? "A live GPS location is required. Enable phone location or place the pin on the map."
-          : "This file did not contain accessible GPS coordinates. Place the pin on the map before submitting.",
+      organization.map_mode !== "gps"
+        ? "Photo ready. Tap the site plan to place the item, then review the details."
+        : mapped
+          ? mapped.source === "photo_exif"
+            ? "Photo location found. Review the pin before submitting."
+            : "Current location captured. Review the pin before submitting."
+          : mobileDevice
+            ? "A live GPS location is required. Enable phone location or place the pin on the map."
+            : "This file did not contain accessible GPS coordinates. Place the pin on the map before submitting.",
     );
     setPreparing(false);
     setStep("review");
@@ -946,8 +1003,12 @@ export default function SubmitPage({
       </main>
     );
 
-  const mapLat = point?.lat ?? organization.center_lat;
-  const mapLng = point?.lng ?? organization.center_lng;
+  const mapLat =
+    point?.lat ??
+    (organization.map_mode === "gps" ? organization.center_lat : 50);
+  const mapLng =
+    point?.lng ??
+    (organization.map_mode === "gps" ? organization.center_lng : 50);
   const displayPhoto =
     preview || (target?.photo_path ? publicPhoto(target.photo_path) : "");
   const photoDumpRemaining = Math.max(0, queuedPhotos.length - queueIndex - 1);
@@ -1312,13 +1373,13 @@ export default function SubmitPage({
                       : "Location required"}
                   </strong>
                 </div>
-                {point && mobileDevice && (
+                {point && mobileDevice && organization.map_mode === "gps" && (
                   <button type="button" onClick={locate}>
                     Update from phone
                   </button>
                 )}
               </div>
-              {!point && mobileDevice && (
+              {!point && mobileDevice && organization.map_mode === "gps" && (
                 <div className="location-needed">
                   <div>
                     <strong>Use the phone's current location</strong>
@@ -1333,7 +1394,7 @@ export default function SubmitPage({
                   <small>Or tap the map to place the pin yourself.</small>
                 </div>
               )}
-              {!point && !mobileDevice && (
+              {!point && !mobileDevice && organization.map_mode === "gps" && (
                 <div className="location-needed desktop-location-needed">
                   <div>
                     <strong>No embedded GPS was found</strong>
@@ -1344,10 +1405,20 @@ export default function SubmitPage({
                   </div>
                 </div>
               )}
-              <MapView
-                latitude={organization.center_lat}
-                longitude={organization.center_lng}
-                zoom={Math.min(16, organization.map_zoom)}
+              {organization.map_mode !== "gps" && (
+                <div className="location-needed plan-location-needed">
+                  <div>
+                    <strong>Place the item on the site plan</strong>
+                    <span>
+                      Tap the exact aisle, room, row, or zone. No GPS is
+                      required for this map.
+                    </span>
+                  </div>
+                </div>
+              )}
+              <SiteMapView
+                organization={organization}
+                mapImageUrl={mapImage}
                 markerLatitude={mapLat}
                 markerLongitude={mapLng}
                 markerLabel="Photo location"
@@ -1361,12 +1432,16 @@ export default function SubmitPage({
               />
               <div className="coordinate-readout">
                 <span>
-                  GPS coordinates
+                  {organization.map_mode === "gps"
+                    ? "GPS coordinates"
+                    : "Site-plan position"}
                   {point ? ` · ${locationSourceLabel(point.source)}` : ""}
                 </span>
                 <code>
                   {point
-                    ? `${point.lat.toFixed(6)}, ${point.lng.toFixed(6)}`
+                    ? organization.map_mode === "gps"
+                      ? `${point.lat.toFixed(6)}, ${point.lng.toFixed(6)}`
+                      : `${point.lng.toFixed(1)}% across · ${point.lat.toFixed(1)}% down`
                     : "Location required"}
                 </code>
               </div>

@@ -25,6 +25,7 @@ type Enrichment = {
 type OrganizationContext = {
   id: string;
   mode: "material" | "civic" | "commercial";
+  public_access: boolean;
   ai_enabled: boolean;
   ai_catalog_context: string;
   collections: Array<{
@@ -36,6 +37,85 @@ type OrganizationContext = {
     fields?: Array<{ key: string; label: string; required?: boolean }>;
   }>;
 };
+
+async function canUsePreview(
+  admin: ReturnType<typeof createClient>,
+  request: Request,
+  context: OrganizationContext,
+  searchMode: boolean,
+  submissionType: "new" | "update",
+) {
+  if (searchMode && context.public_access) return true;
+  const token = (request.headers.get("Authorization") || "").replace(
+    /^Bearer\s+/i,
+    "",
+  );
+  if (!token) return false;
+  const { data: authData } = await admin.auth.getUser(token);
+  const user = authData.user;
+  if (!user) return false;
+  const [{ data: platformAdmin }, { data: membership }] = await Promise.all([
+    admin
+      .from("platform_admins")
+      .select("user_id")
+      .eq("user_id", user.id)
+      .maybeSingle(),
+    admin
+      .from("organization_members")
+      .select("role,permissions")
+      .eq("organization_id", context.id)
+      .eq("user_id", user.id)
+      .maybeSingle(),
+  ]);
+  if (platformAdmin || membership?.role === "admin") return true;
+  if (searchMode) return Boolean(membership);
+  if (membership?.role !== "employee") return false;
+  const permissionKey =
+    submissionType === "update" ? "updateItems" : "addItems";
+  return membership.permissions?.[permissionKey] !== false;
+}
+
+async function canManageOrganization(
+  admin: ReturnType<typeof createClient>,
+  request: Request,
+  organizationId: string,
+) {
+  const token = (request.headers.get("Authorization") || "").replace(
+    /^Bearer\s+/i,
+    "",
+  );
+  if (!token) return false;
+  const { data: authData } = await admin.auth.getUser(token);
+  const user = authData.user;
+  if (!user) return false;
+  const [
+    { data: platformAdmin },
+    { data: organization },
+    { data: membership },
+  ] = await Promise.all([
+    admin
+      .from("platform_admins")
+      .select("user_id")
+      .eq("user_id", user.id)
+      .maybeSingle(),
+    admin
+      .from("organizations")
+      .select("created_by")
+      .eq("id", organizationId)
+      .maybeSingle(),
+    admin
+      .from("organization_members")
+      .select("role")
+      .eq("organization_id", organizationId)
+      .eq("user_id", user.id)
+      .maybeSingle(),
+  ]);
+  return Boolean(
+    platformAdmin ||
+      organization?.created_by === user.id ||
+      membership?.role === "admin",
+  );
+}
 
 const duplicateFieldKeys = new Set(["identifier", "verified_date"]);
 
@@ -308,6 +388,8 @@ Deno.serve(async (request) => {
       const organizationId = String(payload?.organization_id || "");
       const imageDataUrl = String(payload?.image_data_url || "");
       const searchMode = payload?.search_mode === true;
+      const submissionType =
+        payload?.submission_type === "update" ? "update" : "new";
       if (!/^[0-9a-f-]{36}$/i.test(organizationId))
         return response({ error: "A valid organization id is required" }, 400);
       if (
@@ -321,12 +403,27 @@ Deno.serve(async (request) => {
 
       const { data: organization, error: orgError } = await admin
         .from("organizations")
-        .select("id,mode,ai_enabled,ai_catalog_context,collections")
+        .select(
+          "id,mode,public_access,ai_enabled,ai_catalog_context,collections",
+        )
         .eq("id", organizationId)
         .single();
       if (orgError) throw orgError;
       const context = organization as OrganizationContext;
       if (!context.ai_enabled) return response({ status: "disabled" }, 202);
+      if (
+        !(await canUsePreview(
+          admin,
+          request,
+          context,
+          searchMode,
+          submissionType,
+        ))
+      )
+        return response(
+          { error: "This account cannot use photo suggestions for this site" },
+          403,
+        );
       if (!visibleCollections(context, searchMode).length)
         return response(
           { error: "No submission collections are available" },
@@ -360,7 +457,24 @@ Deno.serve(async (request) => {
     if (!/^[0-9a-f-]{36}$/i.test(submissionId))
       return response({ error: "A valid submission id is required" }, 400);
 
-    // Existing administrator retry path remains idempotent.
+    // Administrator retries are idempotent, but only the platform or this
+    // site's administrators may spend AI usage on a pending submission.
+    const { data: retryTarget, error: retryTargetError } = await admin
+      .from("submissions")
+      .select("organization_id")
+      .eq("id", submissionId)
+      .maybeSingle();
+    if (retryTargetError) throw retryTargetError;
+    if (!retryTarget) return response({ status: "already_processed" }, 202);
+    if (
+      !(await canManageOrganization(
+        admin,
+        request,
+        retryTarget.organization_id,
+      ))
+    )
+      return response({ error: "Administrator access required" }, 403);
+
     const { data: submission, error: claimError } = await admin
       .from("submissions")
       .update({ ai_status: "processing" })
@@ -390,7 +504,7 @@ Deno.serve(async (request) => {
 
     const { data: organization, error: orgError } = await admin
       .from("organizations")
-      .select("id,mode,ai_enabled,ai_catalog_context,collections")
+      .select("id,mode,public_access,ai_enabled,ai_catalog_context,collections")
       .eq("id", submission.organization_id)
       .single();
     if (orgError) throw orgError;

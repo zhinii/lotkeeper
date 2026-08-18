@@ -11,6 +11,9 @@ create table public.organizations (
   center_lng double precision not null,
   map_zoom integer not null default 14 check (map_zoom between 3 and 22),
   boundary jsonb not null default '[]'::jsonb,
+  map_mode text not null default 'gps' check (map_mode in ('gps','image','grid')),
+  map_image_path text,
+  map_config jsonb not null default '{"gridRows":8,"gridColumns":10,"label":"Site map"}'::jsonb,
   collections jsonb not null default '[]'::jsonb,
   ai_enabled boolean not null default false,
   ai_catalog_context text not null default '',
@@ -27,7 +30,8 @@ create table public.platform_admins (
 create table public.organization_members (
   organization_id uuid not null references public.organizations(id) on delete cascade,
   user_id uuid not null references auth.users(id) on delete cascade,
-  role text not null check (role in ('admin','staff','viewer')),
+  role text not null check (role in ('admin','employee','viewer')),
+  permissions jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now(),
   primary key (organization_id,user_id)
 );
@@ -112,6 +116,7 @@ create table public.inventory_transactions (
   organization_id uuid not null references public.organizations(id) on delete cascade,
   record_id uuid not null references public.records(id) on delete cascade,
   user_id uuid not null references auth.users(id),
+  actor_name text not null default 'Team member',
   event_type text not null check (event_type in ('used','removed','added','counted','moved')),
   quantity numeric not null,
   before_quantity numeric,
@@ -177,11 +182,15 @@ as $$ select exists(select 1 from public.platform_admins where user_id=auth.uid(
 
 create or replace function public.is_org_admin(target uuid)
 returns boolean language sql stable security definer set search_path=public
-as $$ select exists(select 1 from public.organizations o where o.id=target and (o.created_by=auth.uid() or exists(select 1 from public.organization_members m where m.organization_id=target and m.user_id=auth.uid() and m.role='admin'))) $$;
+as $$ select public.is_platform_admin() or exists(select 1 from public.organizations o where o.id=target and (o.created_by=auth.uid() or exists(select 1 from public.organization_members m where m.organization_id=target and m.user_id=auth.uid() and m.role='admin'))) $$;
+
+create or replace function public.member_has_permission(target uuid, permission_key text)
+returns boolean language sql stable security definer set search_path=public
+as $$ select public.is_org_admin(target) or exists(select 1 from public.organization_members m where m.organization_id=target and m.user_id=auth.uid() and (m.role='employee' or permission_key in ('viewPrivate','viewInventory')) and coalesce((m.permissions->>permission_key)::boolean,m.role='employee' and permission_key in ('viewPrivate','viewInventory','addItems','updateItems','adjustInventory'))) $$;
 
 create or replace function public.can_view_org(target uuid)
 returns boolean language sql stable security definer set search_path=public
-as $$ select exists(select 1 from public.organizations o where o.id=target and (o.public_access or public.is_org_member(o.id) or o.created_by=auth.uid())) $$;
+as $$ select exists(select 1 from public.organizations o where o.id=target and (o.public_access or public.is_platform_admin() or public.is_org_member(o.id) or o.created_by=auth.uid())) $$;
 
 create or replace function public.collection_accepts_public(target uuid, collection_key text)
 returns boolean language sql stable security definer set search_path=public
@@ -193,7 +202,7 @@ as $$ select exists(select 1 from public.organizations o, jsonb_array_elements(o
 
 create or replace function public.can_upload_submission_media(target uuid)
 returns boolean language sql stable security definer set search_path=public
-as $$ select public.is_org_member(target) $$;
+as $$ select public.member_has_permission(target,'addItems') or public.member_has_permission(target,'updateItems') $$;
 
 create or replace function public.public_record_data(target uuid, collection_key text, proposed_data jsonb)
 returns jsonb language sql stable security definer set search_path=public
@@ -209,21 +218,21 @@ as $$
     )
 $$;
 
-create policy organizations_read on public.organizations for select using (public_access or public.is_org_member(id) or created_by=auth.uid());
+create policy organizations_read on public.organizations for select using (public_access or public.is_platform_admin() or public.is_org_member(id) or created_by=auth.uid());
 create policy platform_admin_self_read on public.platform_admins for select to authenticated using (user_id=auth.uid());
 create policy organizations_admin_update on public.organizations for update to authenticated using (public.is_org_admin(id)) with check (public.is_org_admin(id));
 create policy members_read on public.organization_members for select to authenticated using (user_id=auth.uid() or public.is_org_admin(organization_id));
 create policy members_admin_manage on public.organization_members for all to authenticated using (public.is_org_admin(organization_id)) with check (public.is_org_admin(organization_id));
-create policy records_read on public.records for select using (public.can_view_org(organization_id) and (public.is_org_member(organization_id) or public_visible));
+create policy records_read on public.records for select using (public.can_view_org(organization_id) and (public_visible or public.member_has_permission(organization_id,'viewPrivate')));
 create policy records_admin_manage on public.records for all to authenticated using (public.is_org_admin(organization_id)) with check (public.is_org_admin(organization_id));
-create policy private_record_member_read on public.record_private_data for select to authenticated using (public.is_org_member(organization_id));
+create policy private_record_member_read on public.record_private_data for select to authenticated using (public.member_has_permission(organization_id,'viewPrivate'));
 create policy private_record_admin_manage on public.record_private_data for all to authenticated using (public.is_org_admin(organization_id)) with check (public.is_org_admin(organization_id));
-create policy versions_member_read on public.record_versions for select to authenticated using (public.is_org_member(organization_id));
-create policy submissions_create on public.submissions for insert to anon,authenticated with check (status='pending' and (public.collection_accepts_public(organization_id,collection_id) or public.is_org_member(organization_id)) and (submitted_by is null or submitted_by=auth.uid()));
+create policy versions_member_read on public.record_versions for select to authenticated using (public.member_has_permission(organization_id,'viewPrivate'));
+create policy submissions_create on public.submissions for insert to authenticated with check (status='pending' and submitted_by=auth.uid() and ((submission_type='new' and public.member_has_permission(organization_id,'addItems')) or (submission_type='update' and public.member_has_permission(organization_id,'updateItems'))));
 create policy submissions_admin_read on public.submissions for select to authenticated using (public.is_org_admin(organization_id));
 create policy submissions_admin_update on public.submissions for update to authenticated using (public.is_org_admin(organization_id)) with check (public.is_org_admin(organization_id));
 create policy submissions_admin_delete on public.submissions for delete to authenticated using (public.is_org_admin(organization_id) and status<>'pending');
-create policy inventory_member_read on public.inventory_transactions for select to authenticated using (public.is_org_member(organization_id));
+create policy inventory_member_read on public.inventory_transactions for select to authenticated using (public.member_has_permission(organization_id,'viewInventory'));
 create policy searches_member_insert on public.search_events for insert to authenticated with check (public.is_org_member(organization_id) and user_id=auth.uid());
 create policy searches_admin_read on public.search_events for select to authenticated using (public.is_org_admin(organization_id));
 create policy alerts_admin_read on public.alerts for select to authenticated using (public.is_org_admin(organization_id));
@@ -270,10 +279,10 @@ create or replace function public.record_inventory_use(target_record uuid, amoun
 returns numeric language plpgsql security definer set search_path=public
 as $$ declare r public.records; after_amount numeric; begin
   select * into r from public.records where id=target_record for update;
-  if r.id is null or not public.is_org_member(r.organization_id) then raise exception 'Member access required'; end if;
+  if r.id is null or not public.member_has_permission(r.organization_id,'adjustInventory') then raise exception 'Inventory adjustment permission required'; end if;
   if amount_used<=0 then raise exception 'Amount must be greater than zero'; end if;
   after_amount:=case when r.quantity is null then null else greatest(0,r.quantity-amount_used) end;
-  insert into public.inventory_transactions(organization_id,record_id,user_id,event_type,quantity,before_quantity,after_quantity,note) values(r.organization_id,r.id,auth.uid(),'used',amount_used,r.quantity,after_amount,note_text);
+  insert into public.inventory_transactions(organization_id,record_id,user_id,actor_name,event_type,quantity,before_quantity,after_quantity,note) values(r.organization_id,r.id,auth.uid(),coalesce(auth.jwt()->>'email','Team member'),'used',amount_used,r.quantity,after_amount,note_text);
   update public.records set quantity=after_amount,updated_at=now(),updated_by=auth.uid() where id=r.id;
   insert into public.alerts(organization_id,alert_type,title,detail,record_id) values(r.organization_id,'inventory_used','Inventory used: '||r.name,amount_used||coalesce(' '||r.unit,'')||' reported used',r.id);
   return after_amount;
@@ -300,8 +309,24 @@ as $$ declare new_id uuid; begin
   return new_id;
 end $$;
 
+create or replace function public.adjust_inventory(target_record uuid, quantity_value numeric, event_kind text, note_text text default '')
+returns numeric language plpgsql security definer set search_path=public
+as $$ declare r public.records; after_amount numeric; changed_amount numeric; begin
+  select * into r from public.records where id=target_record for update;
+  if r.id is null or not public.member_has_permission(r.organization_id,'adjustInventory') then raise exception 'Inventory adjustment permission required'; end if;
+  if event_kind not in ('added','used','counted') then raise exception 'Choose received, used, or counted'; end if;
+  if quantity_value<0 or (event_kind<>'counted' and quantity_value=0) then raise exception 'Enter a valid quantity'; end if;
+  if event_kind='counted' then after_amount:=quantity_value; elsif event_kind='added' then after_amount:=coalesce(r.quantity,0)+quantity_value; else after_amount:=greatest(0,coalesce(r.quantity,0)-quantity_value); end if;
+  changed_amount:=case when event_kind='counted' then abs(after_amount-coalesce(r.quantity,0)) else quantity_value end;
+  insert into public.inventory_transactions(organization_id,record_id,user_id,actor_name,event_type,quantity,before_quantity,after_quantity,note) values(r.organization_id,r.id,auth.uid(),coalesce(auth.jwt()->>'email','Team member'),event_kind,changed_amount,r.quantity,after_amount,nullif(trim(note_text),''));
+  update public.records set quantity=after_amount,updated_at=now(),updated_by=auth.uid(),version=version+1 where id=r.id;
+  insert into public.alerts(organization_id,alert_type,title,detail,record_id) values(r.organization_id,'inventory_'||event_kind,'Inventory updated: '||r.name,event_kind||' · '||quantity_value||coalesce(' '||r.unit,'')||case when trim(note_text)='' then '' else ' · '||trim(note_text) end,r.id);
+  return after_amount;
+end $$;
+
 insert into storage.buckets(id,name,public,file_size_limit,allowed_mime_types) values('submission-media','submission-media',false,15728640,array['image/jpeg','image/png','image/webp','image/heic','image/heif']) on conflict(id) do update set public=false,file_size_limit=excluded.file_size_limit,allowed_mime_types=excluded.allowed_mime_types;
 insert into storage.buckets(id,name,public,file_size_limit,allowed_mime_types) values('public-records','public-records',true,15728640,array['image/jpeg','image/png','image/webp']) on conflict(id) do update set public=true,file_size_limit=excluded.file_size_limit,allowed_mime_types=excluded.allowed_mime_types;
+insert into storage.buckets(id,name,public,file_size_limit,allowed_mime_types) values('site-maps','site-maps',false,15728640,array['image/jpeg','image/png','image/webp']) on conflict(id) do update set public=false,file_size_limit=excluded.file_size_limit,allowed_mime_types=excluded.allowed_mime_types;
 
 create policy submission_photo_create on storage.objects for insert to anon,authenticated with check (bucket_id='submission-media' and public.can_upload_submission_media(((storage.foldername(name))[1])::uuid));
 create policy submission_photo_admin_read on storage.objects for select to authenticated using (bucket_id='submission-media' and public.is_org_admin(((storage.foldername(name))[1])::uuid));
@@ -309,6 +334,10 @@ create policy submission_photo_admin_delete on storage.objects for delete to aut
 create policy public_photo_read on storage.objects for select using (bucket_id='public-records');
 create policy public_photo_admin_insert on storage.objects for insert to authenticated with check (bucket_id='public-records' and public.is_org_admin(((storage.foldername(name))[1])::uuid));
 create policy public_photo_admin_update on storage.objects for update to authenticated using (bucket_id='public-records' and public.is_org_admin(((storage.foldername(name))[1])::uuid)) with check (bucket_id='public-records' and public.is_org_admin(((storage.foldername(name))[1])::uuid));
+create policy site_map_read on storage.objects for select using (bucket_id='site-maps' and public.can_view_org(((storage.foldername(name))[1])::uuid));
+create policy site_map_admin_insert on storage.objects for insert to authenticated with check (bucket_id='site-maps' and public.is_org_admin(((storage.foldername(name))[1])::uuid));
+create policy site_map_admin_update on storage.objects for update to authenticated using (bucket_id='site-maps' and public.is_org_admin(((storage.foldername(name))[1])::uuid)) with check (bucket_id='site-maps' and public.is_org_admin(((storage.foldername(name))[1])::uuid));
+create policy site_map_admin_delete on storage.objects for delete to authenticated using (bucket_id='site-maps' and public.is_org_admin(((storage.foldername(name))[1])::uuid));
 
 grant usage on schema public to anon,authenticated;
 grant usage on schema public to service_role;
@@ -325,6 +354,8 @@ grant select,insert,update,delete on all tables in schema public to authenticate
 grant execute on function public.create_organization to authenticated;
 grant execute on function public.approve_submission to authenticated;
 grant execute on function public.record_inventory_use to authenticated;
+grant execute on function public.member_has_permission to anon,authenticated;
+grant execute on function public.adjust_inventory to authenticated;
 grant execute on function public.log_material_search(uuid,text,text,jsonb,integer) to anon,authenticated;
 
 select 'Material Pin schema installed' as result;

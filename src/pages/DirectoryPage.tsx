@@ -1,8 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import MapView from "../components/MapView";
+import AppHeader from "../components/AppHeader";
+import SiteMapView from "../components/SiteMapView";
+import { permissionsFor, roleLabel } from "../lib/permissions";
 import { navigate } from "../lib/route";
-import { publicPhoto, requireSupabase } from "../lib/supabase";
-import type { Organization, RecordItem } from "../types";
+import { publicPhoto, requireSupabase, siteMapUrl } from "../lib/supabase";
+import type {
+  MemberPermissions,
+  Organization,
+  OrganizationMembership,
+  RecordItem,
+} from "../types";
 
 type AvailabilityFilter = "all" | "available" | "empty" | "untracked";
 
@@ -78,6 +85,13 @@ export default function DirectoryPage({ slug }: { slug: string }) {
   );
   const [searchKind, setSearchKind] = useState<"text" | "image">("text");
   const [isMember, setIsMember] = useState(false);
+  const [membership, setMembership] = useState<OrganizationMembership | null>(
+    null,
+  );
+  const [permissions, setPermissions] = useState<MemberPermissions>(
+    permissionsFor(null),
+  );
+  const [mapImage, setMapImage] = useState("");
   const photoSearchInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -94,6 +108,8 @@ export default function DirectoryPage({ slug }: { slug: string }) {
         return;
       }
       setOrganization(org as Organization);
+      if (org.map_image_path)
+        void siteMapUrl(org.map_image_path).then(setMapImage);
       const [{ data: recordRows }, { data: authData }] = await Promise.all([
         client
           .from("records")
@@ -105,24 +121,40 @@ export default function DirectoryPage({ slug }: { slug: string }) {
       ]);
       let privateByRecord = new Map<string, Record<string, unknown>>();
       if (authData.user) {
-        const [{ data: memberships }, { data: privateRows }] =
+        const [{ data: membershipRow }, { data: platformRows }] =
           await Promise.all([
             client
               .from("organization_members")
-              .select("organization_id")
-              .eq("organization_id", org.id),
-            client
-              .from("record_private_data")
-              .select("record_id,data")
-              .eq("organization_id", org.id),
+              .select("organization_id,user_id,role,permissions")
+              .eq("organization_id", org.id)
+              .eq("user_id", authData.user.id)
+              .maybeSingle(),
+            client.from("platform_admins").select("user_id").limit(1),
           ]);
-        setIsMember(Boolean(memberships?.length));
-        privateByRecord = new Map(
-          (privateRows || []).map((row) => [
-            row.record_id,
-            row.data as Record<string, unknown>,
-          ]),
-        );
+        const effectiveMembership = platformRows?.length
+          ? ({
+              organization_id: org.id,
+              user_id: authData.user.id,
+              role: "admin",
+              permissions: {},
+            } as OrganizationMembership)
+          : (membershipRow as OrganizationMembership | null);
+        const access = permissionsFor(effectiveMembership);
+        setMembership(effectiveMembership);
+        setPermissions(access);
+        setIsMember(Boolean(effectiveMembership));
+        if (access.viewPrivate) {
+          const { data: privateRows } = await client
+            .from("record_private_data")
+            .select("record_id,data")
+            .eq("organization_id", org.id);
+          privateByRecord = new Map(
+            (privateRows || []).map((row) => [
+              row.record_id,
+              row.data as Record<string, unknown>,
+            ]),
+          );
+        }
       }
       setRecords(
         ((recordRows || []) as RecordItem[]).map((item) => ({
@@ -137,9 +169,9 @@ export default function DirectoryPage({ slug }: { slug: string }) {
   const visibleCollections = useMemo(
     () =>
       organization?.collections.filter(
-        (item) => item.publicVisible || isMember,
+        (item) => item.publicVisible || permissions.viewPrivate,
       ) || [],
-    [organization, isMember],
+    [organization, permissions.viewPrivate],
   );
   const categories = useMemo(
     () =>
@@ -267,14 +299,12 @@ export default function DirectoryPage({ slug }: { slug: string }) {
     if (!selected) return;
     const form = new FormData(event.currentTarget);
     const amount = Number(form.get("amount"));
-    const { data, error } = await requireSupabase().rpc(
-      "record_inventory_use",
-      {
-        target_record: selected.id,
-        amount_used: amount,
-        note_text: String(form.get("note") || ""),
-      },
-    );
+    const { data, error } = await requireSupabase().rpc("adjust_inventory", {
+      target_record: selected.id,
+      quantity_value: amount,
+      event_kind: "used",
+      note_text: String(form.get("note") || ""),
+    });
     if (error) return setMessage(error.message);
     setMessage("Inventory updated. The administrator can see this change.");
     setInventoryOpen(false);
@@ -308,32 +338,20 @@ export default function DirectoryPage({ slug }: { slug: string }) {
 
   return (
     <div className="directory-page material-directory">
-      <header className="directory-header">
-        <button
-          className="directory-back"
-          onClick={() => navigate("home")}
-          aria-label="Back to organizations"
-        >
-          ←
+      <AppHeader context={organization.name} backTo="sites">
+        <button className="active">Visual finder</button>
+        {permissions.viewInventory && (
+          <button onClick={() => navigate(`inventory/${organization.slug}`)}>
+            Inventory
+          </button>
+        )}
+        <button onClick={() => navigate("staff")}>
+          {membership ? roleLabel(membership.role) : "Sign in"}
         </button>
-        <div className="directory-identity">
-          <small>MATERIAL PIN</small>
-          <strong>{organization.name}</strong>
-        </div>
-        <div className="directory-role-actions">
-          <button
-            className={
-              isMember ? "directory-employee active" : "directory-employee"
-            }
-            onClick={() => navigate("staff")}
-          >
-            {isMember ? "Employee workspace" : "Employee sign in"}
-          </button>
-          <button className="directory-admin" onClick={() => navigate("admin")}>
-            Admin console
-          </button>
-        </div>
-      </header>
+        {membership?.role === "admin" && (
+          <button onClick={() => navigate("admin")}>Site settings</button>
+        )}
+      </AppHeader>
 
       <main className="material-workspace">
         <section className="material-search-panel">
@@ -530,10 +548,9 @@ export default function DirectoryPage({ slug }: { slug: string }) {
         </section>
 
         <section className="material-map-panel">
-          <MapView
-            latitude={organization.center_lat}
-            longitude={organization.center_lng}
-            zoom={organization.map_zoom}
+          <SiteMapView
+            organization={organization}
+            mapImageUrl={mapImage}
             records={visibleRecords}
             selectedId={selectedId}
             onSelect={openRecord}
@@ -599,10 +616,13 @@ export default function DirectoryPage({ slug }: { slug: string }) {
                   </div>
                 )}
                 <div>
-                  <dt>GPS</dt>
+                  <dt>
+                    {organization.map_mode === "gps" ? "GPS" : "Map position"}
+                  </dt>
                   <dd>
-                    {selected.latitude.toFixed(5)},{" "}
-                    {selected.longitude.toFixed(5)}
+                    {organization.map_mode === "gps"
+                      ? `${selected.latitude.toFixed(5)}, ${selected.longitude.toFixed(5)}`
+                      : `${selected.longitude.toFixed(1)}% across · ${selected.latitude.toFixed(1)}% down`}
                   </dd>
                 </div>
                 {selected.quantity !== null && (
@@ -631,19 +651,24 @@ export default function DirectoryPage({ slug }: { slug: string }) {
               )}
               {isMember && (
                 <div className="detail-actions">
-                  <button
-                    className="primary"
-                    onClick={() =>
-                      navigate(`submit/${organization.slug}/${selected.id}`)
-                    }
-                  >
-                    Update item
-                  </button>
-                  {selected.quantity !== null && (
-                    <button onClick={() => setInventoryOpen((value) => !value)}>
-                      Record inventory use
+                  {permissions.updateItems && (
+                    <button
+                      className="primary"
+                      onClick={() =>
+                        navigate(`submit/${organization.slug}/${selected.id}`)
+                      }
+                    >
+                      Update item
                     </button>
                   )}
+                  {selected.quantity !== null &&
+                    permissions.adjustInventory && (
+                      <button
+                        onClick={() => setInventoryOpen((value) => !value)}
+                      >
+                        Record inventory use
+                      </button>
+                    )}
                 </div>
               )}
               {inventoryOpen && (
@@ -669,7 +694,7 @@ export default function DirectoryPage({ slug }: { slug: string }) {
           </article>
         </div>
       )}
-      {isMember && !detailOpen && (
+      {permissions.addItems && !detailOpen && (
         <button
           className="floating-add"
           onClick={() => navigate(`submit/${organization.slug}`)}

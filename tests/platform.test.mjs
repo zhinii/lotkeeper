@@ -73,7 +73,7 @@ test("Material Pin logs public searches and accountable inventory use", async ()
   const schema = await read("supabase/schema.sql");
   assert.match(directory, /log_material_search/);
   assert.match(directory, /search_mode: true/);
-  assert.match(directory, /record_inventory_use/);
+  assert.match(directory, /adjust_inventory/);
   assert.match(
     schema,
     /create or replace function public\.log_material_search/,
@@ -99,6 +99,9 @@ test("image enrichment is server-side, optional and cost limited", async () => {
   assert.match(edge, /visible laptop remains a laptop/);
   assert.match(edge, /catalog_match/);
   assert.match(edge, /gpt-4o-mini/);
+  assert.match(edge, /canUsePreview/);
+  assert.match(edge, /canManageOrganization/);
+  assert.match(edge, /Administrator access required/);
   assert.match(client, /organization\.ai_enabled/);
   assert.match(
     schema,
@@ -139,24 +142,28 @@ test("boundary drawing uses the current map tool and shows every point", async (
 
 test("public browsing combines image, text and filter search with the map", async () => {
   const home = await read("src/App.tsx");
+  const sites = await read("src/pages/SitesPage.tsx");
   const directory = await read("src/pages/DirectoryPage.tsx");
   const styles = await read("src/styles.css");
   assert.doesNotMatch(home, /Search organizations/);
-  assert.match(home, /organization-grid/);
+  assert.match(home, /Find it fast\. Know what is there/);
+  assert.match(home, /VISUAL FINDER/);
+  assert.match(home, /INVENTORY TRACKER/);
+  assert.match(sites, /site-choice-grid/);
   assert.match(directory, /material-search-panel/);
   assert.match(directory, /Search with a photo/);
   assert.match(directory, /Availability/);
   assert.match(directory, /Named location/);
   assert.match(directory, /onSelect=\{openRecord\}/);
   assert.match(directory, /record-detail-sheet/);
-  assert.match(directory, /Employee sign in/);
-  assert.match(directory, /Employee workspace/);
-  assert.match(directory, /Admin console/);
+  assert.match(directory, /Visual finder/);
+  assert.match(directory, /permissions\.viewInventory/);
+  assert.match(directory, /roleLabel/);
   assert.match(directory, /className="floating-add"/);
   assert.match(directory, /<strong>Add item<\/strong>/);
   assert.match(directory, /pins"\} shown|pins.*shown/s);
   assert.match(styles, /\.material-map-panel \.map-count[\s\S]*bottom:\s*auto/);
-  assert.match(styles, /\.directory-employee\.active/);
+  assert.match(styles, /\.app-header-actions button\.active/);
 });
 
 test("manager console uses plain-language tasks and hides advanced setup", async () => {
@@ -173,27 +180,79 @@ test("manager console uses plain-language tasks and hides advanced setup", async
   assert.match(map, /Exact map values/);
 });
 
-test("organization admins can manage employee access and owners can delete deployments", async () => {
+test("site administrators manage roles, permissions, and users", async () => {
   const admin = await read("src/pages/AdminPage.tsx");
   const staff = await read("src/pages/StaffPage.tsx");
   const manager = await read("supabase/functions/manage-organization/index.ts");
-  assert.match(admin, /Employees and administrators/);
-  assert.match(admin, /Create or assign login/);
+  assert.match(admin, /People and permissions/);
+  assert.match(admin, /Create or assign person/);
+  assert.match(admin, /Site administrator — settings and users/);
+  assert.match(admin, /employeePermissionOptions/);
+  assert.match(admin, /update_member/);
   assert.match(admin, /Delete this organization/);
   assert.match(admin, /No database work is required/);
   assert.match(staff, /Change my password/);
-  assert.match(manager, /action === "create_employee"/);
+  assert.match(
+    manager,
+    /action === "create_employee" \|\| action === "create_member"/,
+  );
+  assert.match(manager, /action === "update_member"/);
   assert.match(manager, /action === "remove_member"/);
   assert.match(manager, /action === "delete_organization"/);
   assert.match(manager, /organization owner or platform administrator/);
   assert.match(manager, /storage[\s\S]*submission-media/);
   assert.match(manager, /storage[\s\S]*public-records/);
+  assert.match(manager, /storage[\s\S]*site-maps/);
   const permissions = await read(
     "supabase/migrations/20260810_organization_management_permissions.sql",
   );
   assert.match(permissions, /organizations to service_role/);
   assert.match(permissions, /organization_members to service_role/);
   assert.match(permissions, /platform_admins to service_role/);
+});
+
+test("database roles enforce platform, site, employee, and viewer access", async () => {
+  const migration = await read(
+    "supabase/migrations/20260818_roles_inventory_site_maps.sql",
+  );
+  const permissions = await read("src/lib/permissions.ts");
+  assert.match(migration, /role in \('admin','employee','viewer'\)/);
+  assert.match(migration, /public\.is_platform_admin\(\)/);
+  assert.match(migration, /member_has_permission/);
+  assert.match(migration, /'viewPrivate'/);
+  assert.match(migration, /'adjustInventory'/);
+  assert.match(permissions, /Viewer/);
+  assert.match(permissions, /Employee/);
+  assert.match(permissions, /Site administrator/);
+});
+
+test("inventory tracker is separate, searchable, and audited", async () => {
+  const inventory = await read("src/pages/InventoryPage.tsx");
+  const schema = await read("supabase/schema.sql");
+  assert.match(inventory, /Know what is on hand/);
+  assert.match(inventory, /Item groups/);
+  assert.match(inventory, /Categories/);
+  assert.match(inventory, /Find inventory/);
+  assert.match(inventory, /Recent inventory activity/);
+  assert.match(inventory, /Stock was received or returned/);
+  assert.match(schema, /create or replace function public\.adjust_inventory/);
+  assert.match(schema, /actor_name/);
+});
+
+test("sites can use GPS, uploaded plans, or generated grids", async () => {
+  const editor = await read("src/components/OrganizationMapEditor.tsx");
+  const plan = await read("src/components/PlanMapView.tsx");
+  const siteMap = await read("src/components/SiteMapView.tsx");
+  const migration = await read(
+    "supabase/migrations/20260818_roles_inventory_site_maps.sql",
+  );
+  assert.match(editor, /Street map/);
+  assert.match(editor, /Uploaded site plan/);
+  assert.match(editor, /Generated grid/);
+  assert.match(plan, /percentage/);
+  assert.match(plan, /generated-site-grid/);
+  assert.match(siteMap, /organization\.map_mode === "image"/);
+  assert.match(migration, /site-maps/);
 });
 
 test("employee and manager use one configurable item detail model", async () => {
@@ -304,7 +363,8 @@ test("submitters choose optional AI after photo and EXIF preparation", async () 
   assert.match(submit, /<video ref=\{cameraVideo\}/);
   assert.match(submit, /captureMobilePhoto/);
   assert.doesNotMatch(submit, /capture="environment"/);
-  assert.match(submit, /const captureLocation = mobileBestPoint\.current/);
+  assert.match(submit, /const captureLocation = requiresGps/);
+  assert.match(submit, /\? mobileBestPoint\.current/);
   assert.match(submit, /MOBILE_REQUIRED_ACCURACY_METERS = 10/);
   assert.match(submit, /usableMobileGps/);
   assert.match(submit, /Waiting for precise GPS/);
@@ -365,6 +425,6 @@ test("Material Pin is installable while retaining the GitHub Pages website", asy
   assert.match(manifest, /"name": "Material Pin"/);
   assert.match(manifest, /icon-192\.png/);
   assert.match(manifest, /icon-512\.png/);
-  assert.match(worker, /material-pin-shell-v13/);
+  assert.match(worker, /material-pin-shell-v14/);
   assert.match(worker, /request\.mode === "navigate"/);
 });

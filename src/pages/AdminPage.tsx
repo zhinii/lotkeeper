@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import CollectionEditor from "../components/CollectionEditor";
-import MapView from "../components/MapView";
+import SiteMapView from "../components/SiteMapView";
 import OrganizationMapEditor, {
   type MapConfiguration,
 } from "../components/OrganizationMapEditor";
@@ -9,8 +9,14 @@ import {
   normalizeCollections,
 } from "../lib/captureFields";
 import { materialDefaults } from "../lib/collections";
+import {
+  employeeDefaults,
+  employeePermissionOptions,
+  permissionsFor,
+  roleLabel,
+} from "../lib/permissions";
 import { navigate } from "../lib/route";
-import { requireSupabase } from "../lib/supabase";
+import { requireSupabase, siteMapUrl } from "../lib/supabase";
 import type {
   AlertItem,
   CollectionDefinition,
@@ -18,6 +24,8 @@ import type {
   RecordItem,
   SearchEvent,
   Submission,
+  MemberPermissions,
+  MemberRole,
 } from "../types";
 
 type Tab =
@@ -39,7 +47,8 @@ const adminTabs: { id: Tab; label: string; icon: string }[] = [
 type OrganizationMember = {
   user_id: string;
   email: string;
-  role: "admin" | "staff";
+  role: MemberRole;
+  permissions: Partial<MemberPermissions> | null;
   created_at: string;
   is_owner: boolean;
 };
@@ -120,6 +129,11 @@ export default function AdminPage() {
   const [searches, setSearches] = useState<SearchEvent[]>([]);
   const [members, setMembers] = useState<OrganizationMember[]>([]);
   const [membersLoading, setMembersLoading] = useState(false);
+  const [newMemberRole, setNewMemberRole] =
+    useState<Exclude<MemberRole, "staff">>("employee");
+  const [memberRoleDrafts, setMemberRoleDrafts] = useState<
+    Record<string, Exclude<MemberRole, "staff">>
+  >({});
   const [submissionPhotos, setSubmissionPhotos] = useState<
     Record<string, string>
   >({});
@@ -136,7 +150,14 @@ export default function AdminPage() {
     longitude: -111.4573,
     zoom: 14,
     boundary: [],
+    mode: "gps",
+    imagePath: null,
+    imageUrl: "",
+    gridRows: 8,
+    gridColumns: 10,
+    label: "Site map",
   });
+  const [editMapFile, setEditMapFile] = useState<File | null>(null);
   const [editPublic, setEditPublic] = useState(false);
   const [editAi, setEditAi] = useState(false);
   const [editAiContext, setEditAiContext] = useState("");
@@ -149,6 +170,12 @@ export default function AdminPage() {
     longitude: -111.4573,
     zoom: 14,
     boundary: [],
+    mode: "gps",
+    imagePath: null,
+    imageUrl: "",
+    gridRows: 8,
+    gridColumns: 10,
+    label: "Site map",
   });
   const [importPoint, setImportPoint] = useState({
     latitude: 36.9148,
@@ -175,13 +202,28 @@ export default function AdminPage() {
         longitude: selected.center_lng,
         zoom: selected.map_zoom,
         boundary: selected.boundary || [],
+        mode: selected.map_mode || "gps",
+        imagePath: selected.map_image_path || null,
+        imageUrl: "",
+        gridRows: selected.map_config?.gridRows || 8,
+        gridColumns: selected.map_config?.gridColumns || 10,
+        label: selected.map_config?.label || "Site map",
       });
+      setEditMapFile(null);
+      if (selected.map_image_path)
+        void siteMapUrl(selected.map_image_path).then((imageUrl) =>
+          setEditMap((current) =>
+            current.imagePath === selected.map_image_path
+              ? { ...current, imageUrl }
+              : current,
+          ),
+        );
       setEditPublic(selected.public_access);
       setEditAi(selected.ai_enabled);
       setEditAiContext(selected.ai_catalog_context || "");
       setImportPoint({
-        latitude: selected.center_lat,
-        longitude: selected.center_lng,
+        latitude: selected.map_mode === "gps" ? selected.center_lat : 50,
+        longitude: selected.map_mode === "gps" ? selected.center_lng : 50,
       });
       setRecordCollection("");
       setRecordCategory("");
@@ -337,6 +379,12 @@ export default function AdminPage() {
           ai_catalog_context: String(
             form.get("ai_catalog_context") || "",
           ).trim(),
+          map_mode: createMap.mode,
+          map_config: {
+            gridRows: createMap.gridRows,
+            gridColumns: createMap.gridColumns,
+            label: createMap.label,
+          },
         })
         .eq("id", newId);
       if (setupError) return setMessage(setupError.message);
@@ -347,6 +395,23 @@ export default function AdminPage() {
   }
   async function saveConfiguration() {
     if (!selected) return;
+    let imagePath = editMap.imagePath;
+    if (editMapFile) {
+      const extension =
+        editMapFile.type === "image/png"
+          ? "png"
+          : editMapFile.type === "image/webp"
+            ? "webp"
+            : "jpg";
+      imagePath = `${selected.id}/site-map.${extension}`;
+      const upload = await requireSupabase()
+        .storage.from("site-maps")
+        .upload(imagePath, editMapFile, {
+          upsert: true,
+          contentType: editMapFile.type,
+        });
+      if (upload.error) return setMessage(upload.error.message);
+    }
     const { error } = await requireSupabase()
       .from("organizations")
       .update({
@@ -358,10 +423,18 @@ export default function AdminPage() {
         center_lng: editMap.longitude,
         map_zoom: editMap.zoom,
         boundary: editMap.boundary,
+        map_mode: editMap.mode,
+        map_image_path: imagePath,
+        map_config: {
+          gridRows: editMap.gridRows,
+          gridColumns: editMap.gridColumns,
+          label: editMap.label.trim() || "Site map",
+        },
       })
       .eq("id", selected.id);
     if (error) return setMessage(error.message);
-    setMessage("Map, access and collection settings saved.");
+    setEditMapFile(null);
+    setMessage("People, map, access, AI, and item settings saved.");
     await loadOrganizations();
   }
 
@@ -382,7 +455,16 @@ export default function AdminPage() {
         ),
       );
     }
-    setMembers((data?.members || []) as OrganizationMember[]);
+    const loadedMembers = (data?.members || []) as OrganizationMember[];
+    setMembers(loadedMembers);
+    setMemberRoleDrafts(
+      Object.fromEntries(
+        loadedMembers.map((member) => [
+          member.user_id,
+          member.role === "staff" ? "employee" : member.role,
+        ]),
+      ),
+    );
   }
 
   async function createEmployee(event: React.FormEvent<HTMLFormElement>) {
@@ -390,16 +472,22 @@ export default function AdminPage() {
     if (!selected) return;
     const formElement = event.currentTarget;
     const form = new FormData(formElement);
-    setMessage("Creating employee access…");
+    setMessage("Saving person access…");
     const { data, error } = await requireSupabase().functions.invoke(
       "manage-organization",
       {
         body: {
-          action: "create_employee",
+          action: "create_member",
           organization_id: selected.id,
           email: String(form.get("employee_email") || "").trim(),
           password: String(form.get("temporary_password") || ""),
-          role: String(form.get("employee_role") || "staff"),
+          role: String(form.get("employee_role") || "employee"),
+          permissions: Object.fromEntries(
+            employeePermissionOptions.map((permission) => [
+              permission.key,
+              form.get(`permission_${permission.key}`) === "on",
+            ]),
+          ),
         },
       },
     );
@@ -412,7 +500,40 @@ export default function AdminPage() {
         ),
       );
     formElement.reset();
-    setMessage(data.message || "Employee access created.");
+    setNewMemberRole("employee");
+    setMessage(data.message || "Person access saved.");
+    await loadMembers(selected.id);
+  }
+
+  async function updateMemberAccess(
+    event: React.FormEvent<HTMLFormElement>,
+    member: OrganizationMember,
+  ) {
+    event.preventDefault();
+    if (!selected) return;
+    const form = new FormData(event.currentTarget);
+    const { data, error } = await requireSupabase().functions.invoke(
+      "manage-organization",
+      {
+        body: {
+          action: "update_member",
+          organization_id: selected.id,
+          user_id: member.user_id,
+          role: String(form.get("member_role") || "viewer"),
+          permissions: Object.fromEntries(
+            employeePermissionOptions.map((permission) => [
+              permission.key,
+              form.get(`member_permission_${permission.key}`) === "on",
+            ]),
+          ),
+        },
+      },
+    );
+    if (error || data?.error)
+      return setMessage(
+        await functionErrorMessage(data, error, "Access could not be updated."),
+      );
+    setMessage(data.message || "Access permissions saved.");
     await loadMembers(selected.id);
   }
 
@@ -850,7 +971,7 @@ export default function AdminPage() {
       <header className="admin-header">
         <button className="brand-button" onClick={() => navigate("home")}>
           <b>MATERIAL PIN</b>
-          <span>Manager</span>
+          <span>{isPlatformAdmin ? "Platform admin" : "Site admin"}</span>
         </button>
         <nav aria-label="Manager sections">
           {adminTabs.map((item) => (
@@ -960,6 +1081,14 @@ export default function AdminPage() {
                 <span>
                   <b>Manage items</b>
                   <small>{records.length} approved entries</small>
+                </span>
+                <i>→</i>
+              </button>
+              <button onClick={() => navigate(`inventory/${selected.slug}`)}>
+                <span className="task-icon items">#</span>
+                <span>
+                  <b>Open inventory tracker</b>
+                  <small>Stock levels, adjustments, and history</small>
                 </span>
                 <i>→</i>
               </button>
@@ -1094,17 +1223,18 @@ export default function AdminPage() {
                       ) : (
                         <div className="empty">No new photo</div>
                       )}
-                      <MapView
-                        latitude={selected?.center_lat ?? item.latitude}
-                        longitude={selected?.center_lng ?? item.longitude}
-                        zoom={Math.min(16, selected?.map_zoom ?? 15)}
-                        markerLatitude={item.latitude}
-                        markerLongitude={item.longitude}
-                        markerLabel={item.proposed.name || "Submitted item"}
-                        boundary={selected?.boundary}
-                        showMarker
-                        compact
-                      />
+                      {selected && (
+                        <SiteMapView
+                          organization={selected}
+                          mapImageUrl={editMap.imageUrl}
+                          markerLatitude={item.latitude}
+                          markerLongitude={item.longitude}
+                          markerLabel={item.proposed.name || "Submitted item"}
+                          boundary={selected?.boundary}
+                          showMarker
+                          compact
+                        />
+                      )}
                     </div>
                     <h2>{item.proposed.name}</h2>
                     {item.target_record_id && (
@@ -1377,14 +1507,16 @@ export default function AdminPage() {
                     <div>
                       <b>Pick the default pin location</b>
                       <small>
-                        Rows with latitude and longitude use their own
-                        coordinates. All other rows use this pin.
+                        {selected.map_mode === "gps"
+                          ? "Rows with latitude and longitude use their own coordinates. All other rows use this pin."
+                          : "Rows without a map position use this pin on the site plan."}
                       </small>
                     </div>
-                    <MapView
-                      latitude={importPoint.latitude}
-                      longitude={importPoint.longitude}
-                      zoom={selected.map_zoom}
+                    <SiteMapView
+                      organization={selected}
+                      mapImageUrl={editMap.imageUrl}
+                      markerLatitude={importPoint.latitude}
+                      markerLongitude={importPoint.longitude}
                       picker
                       compact
                       onPick={(latitude, longitude) =>
@@ -1734,17 +1866,17 @@ export default function AdminPage() {
             <section className="settings-section">
               <div className="settings-step">2</div>
               <div className="settings-content">
-                <h2>Employees and administrators</h2>
+                <h2>People and permissions</h2>
                 <p>
-                  Create a login, assign it to this organization, or remove
-                  access.
+                  Site administrators manage this site. Employees receive only
+                  the actions you select. Viewers are read-only.
                 </p>
                 <form
                   className="employee-create-form"
                   onSubmit={createEmployee}
                 >
                   <label>
-                    Employee email
+                    Email address
                     <input
                       name="employee_email"
                       type="email"
@@ -1768,52 +1900,203 @@ export default function AdminPage() {
                   </label>
                   <label>
                     Access level
-                    <select name="employee_role" defaultValue="staff">
-                      <option value="staff">
-                        Employee — add and update items
+                    <select
+                      name="employee_role"
+                      value={newMemberRole}
+                      onChange={(event) =>
+                        setNewMemberRole(
+                          event.target.value as Exclude<MemberRole, "staff">,
+                        )
+                      }
+                    >
+                      <option value="viewer">Viewer — read only</option>
+                      <option value="employee">
+                        Employee — selected work tools
                       </option>
                       <option value="admin">
-                        Administrator — manage everything
+                        Site administrator — settings and users
                       </option>
                     </select>
                   </label>
+                  <fieldset
+                    className="access-permission-checks"
+                    key={newMemberRole}
+                  >
+                    <legend>
+                      {newMemberRole === "employee"
+                        ? "Employee permissions"
+                        : newMemberRole === "viewer"
+                          ? "Viewer visibility"
+                          : "Site administrator access"}
+                    </legend>
+                    {newMemberRole === "admin" ? (
+                      <p className="role-access-summary">
+                        Site administrators have full access to this site,
+                        including settings, people, approvals, items, and
+                        inventory.
+                      </p>
+                    ) : (
+                      employeePermissionOptions
+                        .filter(
+                          (permission) =>
+                            newMemberRole === "employee" ||
+                            permission.key === "viewPrivate" ||
+                            permission.key === "viewInventory",
+                        )
+                        .map((permission) => (
+                          <label key={permission.key}>
+                            <input
+                              type="checkbox"
+                              name={`permission_${permission.key}`}
+                              defaultChecked={
+                                newMemberRole === "employee" &&
+                                employeeDefaults[permission.key]
+                              }
+                            />
+                            <span>
+                              <b>{permission.label}</b>
+                              <small>{permission.help}</small>
+                            </span>
+                          </label>
+                        ))
+                    )}
+                    <small>
+                      {newMemberRole === "viewer"
+                        ? "Viewers can be allowed to see information, but they can never add, update, approve, or adjust it."
+                        : newMemberRole === "employee"
+                          ? "Only the selected tools will appear for this employee."
+                          : "Full access applies only to this site."}
+                    </small>
+                  </fieldset>
                   <button className="save-button">
-                    Create or assign login
+                    Create or assign person
                   </button>
                 </form>
                 <div className="employee-list">
-                  {members.map((member) => (
-                    <article key={member.user_id}>
-                      <span>
-                        <b>{member.email}</b>
-                        <small>
-                          {member.is_owner
-                            ? "Organization owner"
-                            : member.role === "admin"
-                              ? "Administrator"
-                              : "Employee"}
-                          {member.user_id === session?.user?.id ? " · You" : ""}
-                        </small>
-                      </span>
-                      {!member.is_owner &&
-                        member.user_id !== session?.user?.id && (
-                          <button
-                            type="button"
-                            onClick={() => removeMember(member)}
+                  {members.map((member) => {
+                    const memberPermissions = permissionsFor(member);
+                    const draftRole =
+                      memberRoleDrafts[member.user_id] ||
+                      (member.role === "staff" ? "employee" : member.role);
+                    return (
+                      <details
+                        className="member-access-card"
+                        key={member.user_id}
+                      >
+                        <summary>
+                          <span>
+                            <b>{member.email}</b>
+                            <small>
+                              {member.is_owner
+                                ? "Organization owner"
+                                : roleLabel(member.role)}
+                              {member.user_id === session?.user?.id
+                                ? " · You"
+                                : ""}
+                            </small>
+                          </span>
+                          <i>
+                            {member.is_owner ? "Full access" : "Edit access"}
+                          </i>
+                        </summary>
+                        {!member.is_owner && (
+                          <form
+                            onSubmit={(event) =>
+                              updateMemberAccess(event, member)
+                            }
                           >
-                            Remove access
-                          </button>
+                            <label>
+                              Access level
+                              <select
+                                name="member_role"
+                                value={draftRole}
+                                onChange={(event) =>
+                                  setMemberRoleDrafts((current) => ({
+                                    ...current,
+                                    [member.user_id]: event.target
+                                      .value as Exclude<MemberRole, "staff">,
+                                  }))
+                                }
+                              >
+                                <option value="viewer">
+                                  Viewer — read only
+                                </option>
+                                <option value="employee">
+                                  Employee — selected work tools
+                                </option>
+                                <option value="admin">
+                                  Site administrator — settings and users
+                                </option>
+                              </select>
+                            </label>
+                            <fieldset
+                              className="access-permission-checks compact"
+                              key={`${member.user_id}-${draftRole}`}
+                            >
+                              <legend>
+                                {draftRole === "employee"
+                                  ? "Allowed actions"
+                                  : draftRole === "viewer"
+                                    ? "Allowed information"
+                                    : "Full site access"}
+                              </legend>
+                              {draftRole === "admin" ? (
+                                <p className="role-access-summary">
+                                  This person can manage this site’s settings,
+                                  people, approvals, items, and inventory.
+                                </p>
+                              ) : (
+                                employeePermissionOptions
+                                  .filter(
+                                    (permission) =>
+                                      draftRole === "employee" ||
+                                      permission.key === "viewPrivate" ||
+                                      permission.key === "viewInventory",
+                                  )
+                                  .map((permission) => (
+                                    <label key={permission.key}>
+                                      <input
+                                        type="checkbox"
+                                        name={`member_permission_${permission.key}`}
+                                        defaultChecked={
+                                          memberPermissions[permission.key]
+                                        }
+                                      />
+                                      <span>
+                                        <b>{permission.label}</b>
+                                        <small>{permission.help}</small>
+                                      </span>
+                                    </label>
+                                  ))
+                              )}
+                            </fieldset>
+                            <div className="member-access-actions">
+                              <button className="save-button">
+                                Save access
+                              </button>
+                              {member.user_id !== session?.user?.id && (
+                                <button
+                                  type="button"
+                                  className="danger"
+                                  onClick={() => removeMember(member)}
+                                >
+                                  Remove from site
+                                </button>
+                              )}
+                            </div>
+                          </form>
                         )}
-                    </article>
-                  ))}
+                      </details>
+                    );
+                  })}
                   {membersLoading && <p>Loading employee accounts…</p>}
                   {!membersLoading && !members.length && (
-                    <p>No employee accounts are assigned yet.</p>
+                    <p>No people are assigned yet.</p>
                   )}
                 </div>
                 <p className="employee-password-note">
-                  Give a new employee their temporary password privately. They
-                  can change it from the Employee page after signing in.
+                  Give a new person their temporary password privately. They can
+                  change it after signing in.
                 </p>
               </div>
             </section>
@@ -1894,7 +2177,18 @@ export default function AdminPage() {
             <section className="settings-section map-settings-section">
               <div className="settings-step">4</div>
               <div className="settings-content">
-                <OrganizationMapEditor value={editMap} onChange={setEditMap} />
+                <OrganizationMapEditor
+                  value={editMap}
+                  onChange={setEditMap}
+                  onImageSelected={(file) => {
+                    setEditMapFile(file);
+                    setEditMap((current) => ({
+                      ...current,
+                      mode: "image",
+                      imageUrl: URL.createObjectURL(file),
+                    }));
+                  }}
+                />
               </div>
             </section>
             {(isPlatformAdmin || selected.created_by === session?.user?.id) && (
@@ -2023,6 +2317,7 @@ export default function AdminPage() {
                 <OrganizationMapEditor
                   value={createMap}
                   onChange={setCreateMap}
+                  canUploadImage={false}
                 />
               </section>
               <button>Create organization</button>

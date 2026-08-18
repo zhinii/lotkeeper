@@ -6,7 +6,64 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type",
 };
 
-type MemberRole = "admin" | "staff";
+type MemberRole = "admin" | "employee" | "viewer";
+type MemberPermissions = {
+  viewPrivate: boolean;
+  viewInventory: boolean;
+  addItems: boolean;
+  updateItems: boolean;
+  adjustInventory: boolean;
+};
+
+const employeeDefaults: MemberPermissions = {
+  viewPrivate: true,
+  viewInventory: true,
+  addItems: true,
+  updateItems: true,
+  adjustInventory: true,
+};
+const viewerDefaults: MemberPermissions = {
+  viewPrivate: false,
+  viewInventory: false,
+  addItems: false,
+  updateItems: false,
+  adjustInventory: false,
+};
+
+function memberAccess(roleValue: unknown, permissionValue: unknown) {
+  const normalized = roleValue === "staff" ? "employee" : roleValue;
+  const role: MemberRole =
+    normalized === "admin" ||
+    normalized === "employee" ||
+    normalized === "viewer"
+      ? normalized
+      : "viewer";
+  const supplied =
+    permissionValue && typeof permissionValue === "object"
+      ? (permissionValue as Record<string, unknown>)
+      : {};
+  const defaults = role === "employee" ? employeeDefaults : viewerDefaults;
+  const permissions = Object.fromEntries(
+    Object.entries(defaults).map(([key, fallback]) => [
+      key,
+      typeof supplied[key] === "boolean" ? supplied[key] : fallback,
+    ]),
+  ) as unknown as MemberPermissions;
+  return {
+    role,
+    permissions:
+      role === "admin"
+        ? employeeDefaults
+        : role === "viewer"
+          ? {
+              ...permissions,
+              addItems: false,
+              updateItems: false,
+              adjustInventory: false,
+            }
+          : permissions,
+  };
+}
 
 function response(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -161,7 +218,7 @@ Deno.serve(async (request) => {
     if (action === "list_members") {
       const { data: rows, error } = await admin
         .from("organization_members")
-        .select("user_id,role,created_at")
+        .select("user_id,role,permissions,created_at")
         .eq("organization_id", organizationId)
         .order("created_at");
       if (error) throw error;
@@ -178,17 +235,20 @@ Deno.serve(async (request) => {
       return response({ members });
     }
 
-    if (action === "create_employee") {
+    if (action === "create_employee" || action === "create_member") {
       const email = String(payload?.email || "")
         .trim()
         .toLowerCase();
       const password = String(payload?.password || "");
-      const role = String(payload?.role || "staff") as MemberRole;
+      const { role, permissions } = memberAccess(
+        payload?.role || "employee",
+        payload?.permissions,
+      );
       if (!/^\S+@\S+\.\S+$/.test(email))
         return response({ error: "Enter a valid email address" }, 400);
-      if (role !== "staff" && role !== "admin")
+      if (role !== "employee" && role !== "viewer" && role !== "admin")
         return response(
-          { error: "Choose employee or administrator access" },
+          { error: "Choose viewer, employee, or site administrator access" },
           400,
         );
 
@@ -220,7 +280,12 @@ Deno.serve(async (request) => {
       const { error: memberError } = await admin
         .from("organization_members")
         .upsert(
-          { organization_id: organizationId, user_id: user.id, role },
+          {
+            organization_id: organizationId,
+            user_id: user.id,
+            role,
+            permissions,
+          },
           { onConflict: "organization_id,user_id" },
         );
       if (memberError) {
@@ -228,12 +293,40 @@ Deno.serve(async (request) => {
         throw memberError;
       }
       return response({
-        member: { user_id: user.id, email: user.email, role, is_owner: false },
+        member: {
+          user_id: user.id,
+          email: user.email,
+          role,
+          permissions,
+          is_owner: false,
+        },
         created,
         message: created
-          ? "Employee account created. Give them the temporary password privately."
+          ? "Account created. Give the person their temporary password privately."
           : "Existing account assigned to this organization.",
       });
+    }
+
+    if (action === "update_member") {
+      const userId = String(payload?.user_id || "");
+      if (!/^[0-9a-f-]{36}$/i.test(userId))
+        return response({ error: "Choose a valid person" }, 400);
+      if (userId === organization.created_by)
+        return response(
+          { error: "The organization owner keeps administrator access" },
+          400,
+        );
+      const { role, permissions } = memberAccess(
+        payload?.role,
+        payload?.permissions,
+      );
+      const { error } = await admin
+        .from("organization_members")
+        .update({ role, permissions })
+        .eq("organization_id", organizationId)
+        .eq("user_id", userId);
+      if (error) throw error;
+      return response({ message: "Access permissions saved." });
     }
 
     if (action === "remove_member") {
@@ -271,6 +364,7 @@ Deno.serve(async (request) => {
         return response({ error: "The organization name did not match" }, 400);
       await removeOrganizationFiles(admin, "submission-media", organizationId);
       await removeOrganizationFiles(admin, "public-records", organizationId);
+      await removeOrganizationFiles(admin, "site-maps", organizationId);
       const { error } = await admin
         .from("organizations")
         .delete()

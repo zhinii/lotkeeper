@@ -1,56 +1,89 @@
 # Material Pin
 
-Material Pin is an installable, mobile-first visual material and inventory finder. It combines item photos, map pins, searchable descriptions, SKU data, quantities, named locations and accountable updates in one system.
+Material Pin is a mobile-first visual location finder and inventory tracker for physical sites: yards, warehouses, stores, vehicle lots, parks, campuses, and other large spaces. It connects photos, searchable catalog details, map pins, quantities, named locations, and accountable updates without forcing every site into the same workflow.
 
 Live site: <https://zhinii.github.io/lotkeeper/>
 
-## Three access layers
+## Product structure
 
-- **Public:** choose an organization, view its public items, search by text or photo, filter like a product catalog, and see matching pins on the map. Public visitors cannot change records.
-- **Employee:** sign in to add a photo and pin, update an existing item, record inventory use, and mark the item public or employee-only. Mobile capture requires a valid live GPS fix before and after the camera opens. Desktop upload reads GPS and capture dates from the original image files, with manual map placement available when a file has no coordinates.
-- **Administrator:** create and assign employee logins, review submissions, edit every standard field, change quantities and coordinates, archive items, import inventory CSV files, map generic inventory pins, configure organizations, and review search activity. Organization owners and platform administrators can also permanently delete a deployment from its settings.
+The homepage explains the product. **Open a site** leads to the available public sites; authenticated people also see private sites assigned to them.
 
-Every captured item supports a name, description, quantity, unit, SKU or asset ID, named location, category, GPS coordinates, visibility, timestamps and the account that updated it. Additional organization-specific fields remain configurable.
+Each site has two focused work areas:
 
-## Photo and GPS policy
+- **Visual finder:** McMaster-Carr-style text, photo, and filter search beside a map. Results are image-heavy and open detailed item cards with the matching location.
+- **Inventory tracker:** a separate category-first workspace for SKU, location, on-hand quantity, low/out-of-stock status, received/used/count adjustments, and recent activity. Keeping this separate prevents operational inventory controls from cluttering the finder.
 
-Material Pin intentionally uses different capture controls on mobile and desktop:
+## Four access levels
 
-- **Mobile phones and tablets:** there is no image-file input. Employees must first allow precise browser location, then use Material Pin's live camera preview. The camera remains disabled until a GPS fix accurate to 100 meters or better is available, and location is checked again when the shutter is pressed. The stored location source is `Live phone GPS`.
-- **Desktop and laptop computers:** employees may select one or many original image files. Material Pin reads each file's EXIF capture date and GPS coordinates and presents a crop, AI review and submission screen for each photo in sequence. Files without accessible GPS require manual map placement.
+- **Platform administrator:** can access and create every organization in the shared Material Pin deployment.
+- **Site administrator:** manages settings, users, approvals, catalog items, inventory, AI guidance, and the map for assigned sites only.
+- **Employee:** receives granular permissions from a site administrator: view private items, open inventory, add items, suggest updates, and/or adjust quantities.
+- **Viewer:** read-only. A site administrator can allow private-item or inventory viewing, but viewers cannot submit or change data.
 
-Android can redact GPS metadata when a file is selected through its system photo picker. The mobile workflow therefore does not depend on image EXIF. Opening the live camera starts continuous high-accuracy phone GPS automatically; the shutter unlocks only after the browser reports accuracy within 10 meters and the location continues refining until capture. Actual accuracy still depends on the phone, location permission, satellite visibility and surrounding buildings. Desktop photo dumps should use the original files copied from the camera or phone rather than screenshots, edited exports or messaging-app copies that may have stripped metadata.
+Permissions are enforced in the UI and in Supabase Row-Level Security/functions. Hiding a button is never the only access control.
 
-## Search design
+## Maps and site plans
 
-Text search matches names, descriptions, categories, keywords, SKUs, manufacturers and named locations. Filters narrow by item group, category, availability and location while the map remains visible.
+Each organization selects one location system:
 
-Optional photo search sends a compressed preview to the server-side OpenAI vision workflow. The API returns visible descriptors, readable product/SKU clues and alternate search terms; Material Pin then searches the catalog text. OpenAI text embedding models do not accept images, so this is the practical first implementation for a mixed inventory catalog. It is cost-limited per organization and the API key never enters the browser bundle.
+- **Street map:** MapLibre/OpenStreetMap, GPS/EXIF, live phone location, manual pin correction, and optional boundaries.
+- **Uploaded site plan:** a JPG, PNG, or WebP floor plan, store map, campus diagram, or yard drawing. Pins use percentage positions on the plan, so GPS is not required.
+- **Generated grid:** configurable rows and columns for aisles, bays, zones, or storage yards without an existing drawing.
 
-When adding an item, photo compression and EXIF extraction finish before any AI request. The employee then chooses **Generate details automatically** or **Enter details myself**. Automatic details can be retried if the service is unavailable, and every generated value remains editable before submission.
+The plan image is stored in a private Supabase Storage bucket and delivered with a signed URL only when the organization is viewable.
 
-Each organization can maintain an **AI catalog guide** describing its business, common materials or assets, preferred terminology, identifier formats and facts the AI must not guess. This makes the same image workflow useful for steel service centers, salvage yards, warehouses and other specialized catalogs without changing code.
+## AI assistance
 
-Custom lists and fields do not create SQL columns. Their definitions are stored in the organization's `collections` JSON configuration, while field values use the public or private JSON data attached to each record. This lets deployments add fields without database migrations and keeps older records valid when a form changes.
+The existing server-side OpenAI key is used by the `enrich-submission` Supabase Edge Function. It never enters the GitHub Pages browser bundle.
 
-## CSV inventory import
+AI is optional and user-reviewed. It can:
 
-Administrators can import `name`, `description`, `sku`, `quantity`, `unit`, `category`, `location`, `latitude`, `longitude`, `public`, `keywords`, `manufacturer`, `condition` and `serial` columns. Rows without coordinates use the map location selected during import and appear as generic pins until a photo is added.
+- suggest an item name, description, broad category, keywords, and alternate search terms from a photo;
+- select a likely configured item group and fill only supported visible fields;
+- read clearly visible identifiers or labels without inventing missing characters;
+- convert a search photo into neutral text before searching the real catalog.
+
+AI never publishes an item, approves a submission, or changes inventory. Employees edit suggestions before submission and site administrators approve the result. Per-site catalog guidance improves terminology without forcing unrelated objects into the catalog, and daily usage limits control cost.
+
+## Inventory and data model
+
+Standard records support name, description, category, photo, quantity, unit, SKU/asset ID, named location, map position, visibility, timestamps, and updater. Organization-specific fields are stored as JSON configuration and values, so adding a field does not require a new SQL column.
+
+Inventory changes use a database function that records received, used, and counted quantities with before/after values, the signed-in person, a note, timestamp, and an administrator alert.
+
+CSV import recognizes `name`, `description`, `sku`, `quantity`, `unit`, `category`, `location`, `latitude`, `longitude`, `public`, `keywords`, `manufacturer`, `condition`, and `serial`.
 
 ## Architecture
 
-- React, TypeScript and Vite
+- React, TypeScript, and Vite
 - GitHub Pages static hosting
-- Supabase Auth, PostgreSQL, Storage, Row-Level Security and Edge Functions
-- MapLibre with OpenStreetMap tiles
-- OpenAI Responses API for optional photo metadata and image-to-text search
+- Supabase Auth, PostgreSQL, Storage, Row-Level Security, and Edge Functions
+- MapLibre/OpenStreetMap plus native uploaded-plan/grid maps
+- OpenAI Responses API for optional photo suggestions and image-to-text search
 - Progressive Web App manifest and service worker
 
-Organizations share the Material Pin database by default and are isolated by `organization_id` plus row-level security. A dedicated private deployment can use its own Supabase project with the same schema.
+Organizations share one database by default and are isolated by `organization_id` and RLS. A private paid deployment can use a dedicated Supabase project with the same schema.
+
+## Upgrade an existing deployment
+
+Run migrations in filename order. The current upgrade is:
+
+```text
+supabase/migrations/20260818_roles_inventory_site_maps.sql
+```
+
+Then redeploy both Edge Functions because user management now stores roles and permissions:
+
+```powershell
+supabase functions deploy manage-organization
+supabase functions deploy enrich-submission
+```
+
+The existing `OPENAI_API_KEY` Supabase secret is reused; do not create or expose a new browser key.
 
 ## Local setup
 
-Copy `.env.example` to `.env.development.local` and set the public Supabase values:
+Copy `.env.example` to `.env.development.local` and set only the public browser values:
 
 ```text
 VITE_SUPABASE_URL=...
@@ -65,5 +98,3 @@ pnpm test
 pnpm build
 pnpm dev
 ```
-
-For an existing database, run the SQL migrations in `supabase/migrations` in filename order and deploy `supabase/functions/enrich-submission`.

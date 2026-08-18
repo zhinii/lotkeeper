@@ -1,11 +1,16 @@
 import { useEffect, useState } from "react";
+import AppHeader from "../components/AppHeader";
+import { permissionsFor, roleLabel } from "../lib/permissions";
 import { navigate } from "../lib/route";
 import { requireSupabase } from "../lib/supabase";
-import type { Organization } from "../types";
+import type { Organization, OrganizationMembership } from "../types";
 
 export default function StaffPage() {
   const [session, setSession] = useState<any>(null);
   const [organizations, setOrganizations] = useState<Organization[]>([]);
+  const [memberships, setMemberships] = useState<
+    Record<string, OrganizationMembership>
+  >({});
   const [message, setMessage] = useState("");
 
   useEffect(() => {
@@ -17,14 +22,35 @@ export default function StaffPage() {
 
   useEffect(() => {
     if (!session) return;
-    requireSupabase()
-      .from("organizations")
-      .select("*")
-      .order("name")
-      .then(({ data, error }) => {
-        if (error) setMessage(error.message);
-        setOrganizations((data || []) as Organization[]);
-      });
+    const client = requireSupabase();
+    Promise.all([
+      client.from("organizations").select("*").order("name"),
+      client
+        .from("organization_members")
+        .select("organization_id,user_id,role,permissions")
+        .eq("user_id", session.user.id),
+      client.from("platform_admins").select("user_id").limit(1),
+    ]).then(([orgRows, memberRows, platformRows]) => {
+      if (orgRows.error) setMessage(orgRows.error.message);
+      const organizations = (orgRows.data || []) as Organization[];
+      setOrganizations(organizations);
+      const assigned = Object.fromEntries(
+        ((memberRows.data || []) as OrganizationMembership[]).map((item) => [
+          item.organization_id,
+          item,
+        ]),
+      );
+      if (platformRows.data?.length)
+        organizations.forEach((organization) => {
+          assigned[organization.id] = {
+            organization_id: organization.id,
+            user_id: session.user.id,
+            role: "admin",
+            permissions: {},
+          };
+        });
+      setMemberships(assigned);
+    });
   }, [session]);
 
   async function signIn(event: React.FormEvent<HTMLFormElement>) {
@@ -58,11 +84,11 @@ export default function StaffPage() {
         </button>
         <section className="access-card">
           <div className="brand">MATERIAL PIN</div>
-          <small>EMPLOYEE ACCESS</small>
-          <h1>Update the material map</h1>
+          <small>TEAM ACCESS</small>
+          <h1>Open your Material Pin sites</h1>
           <p>
-            Employees can add items, move pins, update photos and adjust
-            inventory.
+            Your site administrator controls which finder, capture, inventory,
+            and management tools appear after sign-in.
           </p>
           <form onSubmit={signIn}>
             <label>
@@ -93,38 +119,58 @@ export default function StaffPage() {
 
   return (
     <div className="staff-page">
-      <header className="topbar">
-        <div>
-          <div className="brand">MATERIAL PIN</div>
-          <small>Employee workspace</small>
-        </div>
-        <div className="home-actions">
-          <button onClick={() => navigate("home")}>Public site</button>
-          <button onClick={() => requireSupabase().auth.signOut()}>
-            Sign out
-          </button>
-        </div>
-      </header>
+      <AppHeader context="My sites" backTo="home">
+        <button onClick={() => navigate("sites")}>Browse sites</button>
+        <button onClick={() => requireSupabase().auth.signOut()}>
+          Sign out
+        </button>
+      </AppHeader>
       <main className="staff-organizations">
         <small>YOUR SITES</small>
         <h1>Choose where you are working</h1>
         <div className="organization-grid">
-          {organizations.map((organization) => (
-            <button
-              className="organization-card"
-              key={organization.id}
-              onClick={() => navigate(`org/${organization.slug}`)}
-            >
-              <span className="organization-pin" aria-hidden="true">
-                ●
-              </span>
-              <div>
-                <strong>{organization.name}</strong>
-                <small>{organization.collections.length} item groups</small>
-              </div>
-              <b aria-hidden="true">→</b>
-            </button>
-          ))}
+          {organizations.map((organization) => {
+            const membership = memberships[organization.id];
+            const permissions = permissionsFor(membership);
+            return (
+              <article className="workspace-site-card" key={organization.id}>
+                <span className="organization-pin" aria-hidden="true">
+                  ●
+                </span>
+                <div>
+                  <strong>{organization.name}</strong>
+                  <small>
+                    {membership ? roleLabel(membership.role) : "Public viewer"}{" "}
+                    · {organization.collections.length} item groups
+                  </small>
+                </div>
+                <div className="workspace-site-actions">
+                  <button onClick={() => navigate(`org/${organization.slug}`)}>
+                    Visual finder
+                  </button>
+                  {permissions.viewInventory && (
+                    <button
+                      onClick={() => navigate(`inventory/${organization.slug}`)}
+                    >
+                      Inventory
+                    </button>
+                  )}
+                  {permissions.addItems && (
+                    <button
+                      onClick={() => navigate(`submit/${organization.slug}`)}
+                    >
+                      Add item
+                    </button>
+                  )}
+                  {membership?.role === "admin" && (
+                    <button onClick={() => navigate("admin")}>
+                      Site settings
+                    </button>
+                  )}
+                </div>
+              </article>
+            );
+          })}
         </div>
         {!organizations.length && (
           <div className="empty">

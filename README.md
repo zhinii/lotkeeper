@@ -8,16 +8,23 @@ Live site: <https://zhinii.github.io/lotkeeper/>
 
 The homepage explains the product. **Open a site** leads to the available public sites; authenticated people also see private sites assigned to them.
 
-Each site has two focused work areas:
+Each site can enable three focused product modules:
 
 - **Visual finder:** McMaster-Carr-style text, photo, and filter search directly beside a map. Every result and pin shares the same number, making the item-to-location relationship clear at a glance.
-- **Inventory tracker:** a separate category-first workspace for SKU, location, on-hand quantity, low/out-of-stock status, received/used/count adjustments, lightweight sale recording, and recent activity. Keeping this separate prevents operational inventory controls from cluttering the finder.
+- **Inventory tracker:** a separate category-first workspace for SKU, location, on-hand quantity, low/out-of-stock status, received/used/count adjustments, and recent activity. Keeping this separate prevents operational inventory controls from cluttering the finder.
+- **Checkout / POS:** a permission-controlled multi-item cart that records customer or job details, unit prices, tax, payment method, references, and totals. Confirming a checkout updates all affected stock records and the sales audit trail in one database transaction.
+
+The three user-facing interfaces stay intentionally distinct:
+
+- **Customer/viewer:** searches and views allowed items and locations without edit controls.
+- **Employee:** sees only the organization modules and actions granted by a site administrator, including capture, inventory changes, relocation, or checkout.
+- **Administrator:** reviews submissions, manages records, people, permissions, modules, AI guidance, maps, inventory, and sales access for the site. Platform administrators can do this across every organization.
 
 ## Four access levels
 
 - **Platform administrator:** can access and create every organization in the shared Material Pin deployment.
 - **Site administrator:** manages settings, users, approvals, catalog items, inventory, AI guidance, and the map for assigned sites only.
-- **Employee:** receives granular permissions from a site administrator: view private items, open inventory, add items, suggest updates, and/or adjust quantities.
+- **Employee:** receives granular permissions from a site administrator: view private items, open inventory, add items, suggest updates, adjust quantities, relocate items, use checkout, and/or view site-wide sales.
 - **Viewer:** read-only. A site administrator can allow private-item or inventory viewing, but viewers cannot submit or change data.
 
 Permissions are enforced in the UI and in Supabase Row-Level Security/functions. Hiding a button is never the only access control.
@@ -49,11 +56,22 @@ AI never publishes an item, approves a submission, or changes inventory. Employe
 
 Standard records support name, description, category, photo, quantity, unit, SKU/asset ID, named location, map position, visibility, timestamps, and updater. Organization-specific fields are stored as JSON configuration and values, so adding a field does not require a new SQL column.
 
-Inventory changes use a database function that records received, used, counted, and sold quantities with before/after values, the signed-in person, a note, timestamp, and an administrator alert. A sale also records the customer/company/job and optional order or invoice reference, prevents overselling, and reduces the on-hand quantity atomically.
+Inventory changes use a database function that records received, used, counted, moved, and sold activity with before/after values, the signed-in person, a note, timestamp, and an administrator alert. Multi-item checkout records the customer/company/job, contact, order or invoice reference, payment method, per-item prices, tax, and totals. It locks and validates stock before reducing every quantity, so an oversold or invalid line cancels the whole checkout.
 
-This is intentionally a **sale-recording workflow, not payment processing**. Material Pin does not yet calculate tax, take card payments, issue fiscal receipts, manage a cash drawer, or replace accounting software. Those should only be added after real checkout requirements and integrations are defined.
+This is intentionally **checkout and billing-record software, not a card processor or accounting system**. Material Pin calculates and records configured tax and can print a checkout confirmation. It does not charge a card, settle funds, issue jurisdiction-specific fiscal receipts, manage a cash drawer, post to a general ledger, or replace accounting software. Payment processors and accounting integrations should be connected for organizations that need them.
 
-CSV import recognizes `name`, `description`, `sku`, `quantity`, `unit`, `category`, `location`, `latitude`, `longitude`, `public`, `keywords`, `manufacturer`, `condition`, and `serial`.
+### Out-of-stock, sold, and moved items
+
+Zero quantity never silently deletes an item or its pin:
+
+- A consumable collection, including scrap or bulk material, becomes **Out of stock** when cleared. It stays mapped for replenishment, historical location, and search visibility.
+- A persistent collection, such as equipment or a vehicle, becomes **Sold** when checkout reduces it to zero. A non-sale removal becomes **Unavailable**. The record and history remain intact.
+- Adding or receiving quantity makes the item **Available** again.
+- Map pins use clear available, out-of-stock, sold, and unavailable states. Filters can include or exclude unavailable results.
+
+Employees with the **Relocate items** permission can place an item at a new street-map, site-plan, or grid position and update its named location. Material Pin stores the old and new coordinates, old and new named location, person, time, and reason in movement history.
+
+CSV import recognizes `name`, `description`, `sku`, `quantity`, `unit`, `unit_price`/`price`, `category`, `location`, `latitude`, `longitude`, `public`, `keywords`, `manufacturer`, `condition`, and `serial`.
 
 ## Architecture
 
@@ -73,6 +91,7 @@ Run migrations in filename order. The current upgrade is:
 ```text
 supabase/migrations/20260818_roles_inventory_site_maps.sql
 supabase/migrations/20260818_inventory_sales.sql
+supabase/migrations/20260819_product_modules_pos.sql
 ```
 
 Then redeploy both Edge Functions because user management now stores roles and permissions:

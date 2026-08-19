@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import AppHeader from "../components/AppHeader";
+import { featuresFor } from "../lib/features";
 import { permissionsFor, roleLabel } from "../lib/permissions";
 import { navigate } from "../lib/route";
 import { requireSupabase } from "../lib/supabase";
@@ -145,6 +146,7 @@ export default function StaffPage() {
     ? memberships[selectedOrganization.id]
     : null;
   const selectedPermissions = permissionsFor(selectedMembership);
+  const selectedFeatures = featuresFor(selectedOrganization);
 
   return (
     <div className="staff-page">
@@ -207,33 +209,41 @@ export default function StaffPage() {
               </div>
             </section>
             <div className="staff-workspace-actions">
-              <button
-                onClick={() => navigate(`org/${selectedOrganization.slug}`)}
-              >
-                <span>⌖</span>
-                <b>Visual finder</b>
-                <small>Search photos, details, and mapped locations.</small>
-              </button>
-              {selectedPermissions.viewInventory && (
+              {selectedFeatures.mapping && (
                 <button
-                  onClick={() =>
-                    navigate(`inventory/${selectedOrganization.slug}`)
-                  }
+                  onClick={() => navigate(`org/${selectedOrganization.slug}`)}
                 >
-                  <span>▦</span>
-                  <b>
-                    {selectedPermissions.adjustInventory
-                      ? "Inventory & checkout"
-                      : "View inventory"}
-                  </b>
+                  <span>⌖</span>
+                  <b>Visual finder</b>
+                  <small>Search photos, details, and mapped locations.</small>
+                </button>
+              )}
+              {selectedFeatures.inventory &&
+                selectedPermissions.viewInventory && (
+                  <button
+                    onClick={() =>
+                      navigate(`inventory/${selectedOrganization.slug}`)
+                    }
+                  >
+                    <span>▦</span>
+                    <b>Inventory tracker</b>
+                    <small>
+                      Check stock, SKUs, locations, and quantity history.
+                    </small>
+                  </button>
+                )}
+              {selectedFeatures.pos && selectedPermissions.usePos && (
+                <button
+                  onClick={() => navigate(`pos/${selectedOrganization.slug}`)}
+                >
+                  <span>▤</span>
+                  <b>Checkout / POS</b>
                   <small>
-                    {selectedPermissions.adjustInventory
-                      ? "Check stock, update quantities, and record sales."
-                      : "Check stock levels, SKUs, and locations."}
+                    Build a sale and update every stock item together.
                   </small>
                 </button>
               )}
-              {selectedPermissions.addItems && (
+              {selectedFeatures.mapping && selectedPermissions.addItems && (
                 <button
                   onClick={() =>
                     navigate(`submit/${selectedOrganization.slug}`)

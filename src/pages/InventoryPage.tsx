@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import AppHeader from "../components/AppHeader";
+import { featuresFor } from "../lib/features";
+import { availabilityFor, availabilityLabel } from "../lib/inventory";
 import { navigate } from "../lib/route";
 import { permissionsFor, roleLabel } from "../lib/permissions";
 import { requireSupabase } from "../lib/supabase";
@@ -25,7 +27,7 @@ function sku(item: RecordItem) {
   return String(item.data.sku || item.data.asset_id || "—");
 }
 
-type InventoryEventKind = "sold" | "used" | "added" | "counted";
+type InventoryEventKind = "used" | "added" | "counted";
 
 export default function InventoryPage({ slug }: { slug: string }) {
   const [organization, setOrganization] = useState<Organization | null>(null);
@@ -37,7 +39,6 @@ export default function InventoryPage({ slug }: { slug: string }) {
   );
   const [records, setRecords] = useState<RecordItem[]>([]);
   const [transactions, setTransactions] = useState<InventoryTransaction[]>([]);
-  const [salesReady, setSalesReady] = useState(false);
   const [collectionId, setCollectionId] = useState("");
   const [category, setCategory] = useState("all");
   const [query, setQuery] = useState("");
@@ -49,39 +50,31 @@ export default function InventoryPage({ slug }: { slug: string }) {
 
   async function loadInventory(org: Organization, access: MemberPermissions) {
     const client = requireSupabase();
-    const [recordRows, privateRows, transactionRows, salesCapability] =
-      await Promise.all([
-        client
-          .from("records")
-          .select("*")
-          .eq("organization_id", org.id)
-          .eq("status", "active")
-          .order("name"),
-        access.viewPrivate
-          ? client
-              .from("record_private_data")
-              .select("record_id,data")
-              .eq("organization_id", org.id)
-          : Promise.resolve({ data: [], error: null }),
-        access.viewInventory
-          ? client
-              .from("inventory_transactions")
-              .select("*")
-              .eq("organization_id", org.id)
-              .order("created_at", { ascending: false })
-              .limit(40)
-          : Promise.resolve({ data: [], error: null }),
-        access.viewInventory
-          ? client
-              .from("inventory_transactions")
-              .select("counterparty")
-              .limit(1)
-          : Promise.resolve({ data: [], error: null }),
-      ]);
+    const [recordRows, privateRows, transactionRows] = await Promise.all([
+      client
+        .from("records")
+        .select("*")
+        .eq("organization_id", org.id)
+        .eq("status", "active")
+        .order("name"),
+      access.viewPrivate
+        ? client
+            .from("record_private_data")
+            .select("record_id,data")
+            .eq("organization_id", org.id)
+        : Promise.resolve({ data: [], error: null }),
+      access.viewInventory
+        ? client
+            .from("inventory_transactions")
+            .select("*")
+            .eq("organization_id", org.id)
+            .order("created_at", { ascending: false })
+            .limit(40)
+        : Promise.resolve({ data: [], error: null }),
+    ]);
     if (recordRows.error) setMessage(recordRows.error.message);
     if (privateRows.error) setMessage(privateRows.error.message);
     if (transactionRows.error) setMessage(transactionRows.error.message);
-    setSalesReady(!salesCapability.error);
     const privateByRecord = new Map(
       (privateRows.data || []).map((row) => [
         row.record_id,
@@ -139,7 +132,11 @@ export default function InventoryPage({ slug }: { slug: string }) {
       setOrganization(org as Organization);
       setMembership(effectiveMembership);
       setPermissions(access);
-      if (!effectiveMembership || !access.viewInventory) {
+      if (
+        !effectiveMembership ||
+        !access.viewInventory ||
+        !featuresFor(org as Organization).inventory
+      ) {
         setMessage("Your access level does not include the inventory tracker.");
         setLoading(false);
         return;
@@ -195,19 +192,10 @@ export default function InventoryPage({ slug }: { slug: string }) {
       event_kind: String(form.get("event_kind")),
       note_text: String(form.get("note") || ""),
     };
-    if (salesReady) {
-      request.counterparty_text = String(form.get("counterparty") || "");
-      request.reference_text = String(form.get("reference") || "");
-    }
     const { error } = await requireSupabase().rpc("adjust_inventory", request);
     if (error) return setMessage(error.message);
-    const wasSale = adjustEventKind === "sold";
     setAdjusting(null);
-    setMessage(
-      wasSale
-        ? "Sale recorded. Inventory and activity history are updated."
-        : "Inventory updated and added to the activity history.",
-    );
+    setMessage("Inventory updated and added to the activity history.");
     await loadInventory(organization, permissions);
   }
 
@@ -218,7 +206,12 @@ export default function InventoryPage({ slug }: { slug: string }) {
   }
 
   if (loading) return <div className="loading-screen">Loading inventory…</div>;
-  if (!organization || !membership || !permissions?.viewInventory)
+  if (
+    !organization ||
+    !membership ||
+    !permissions?.viewInventory ||
+    !featuresFor(organization).inventory
+  )
     return (
       <main className="access-page">
         <button className="access-back" onClick={() => navigate("home")}>
@@ -248,10 +241,17 @@ export default function InventoryPage({ slug }: { slug: string }) {
   return (
     <div className="inventory-page product-page">
       <AppHeader
-        context={`${organization.name} · Inventory${permissions.adjustInventory ? " & checkout" : ""}`}
+        context={`${organization.name} · Inventory`}
         backTo={`org/${slug}`}
       >
-        <button onClick={() => navigate(`org/${slug}`)}>Visual finder</button>
+        {featuresFor(organization).mapping && (
+          <button onClick={() => navigate(`org/${slug}`)}>Visual finder</button>
+        )}
+        {featuresFor(organization).pos && permissions.usePos && (
+          <button onClick={() => navigate(`pos/${slug}`)}>
+            Checkout / POS
+          </button>
+        )}
         {membership.role === "admin" && (
           <button onClick={() => navigate(`admin/${slug}`)}>
             Admin console
@@ -262,14 +262,10 @@ export default function InventoryPage({ slug }: { slug: string }) {
         <section className="inventory-hero">
           <div>
             <small>INVENTORY TRACKER</small>
-            <h1>
-              {permissions.adjustInventory
-                ? "Inventory and checkout"
-                : "Know what is on hand"}
-            </h1>
+            <h1>Know what is on hand</h1>
             <p>
               {permissions.adjustInventory
-                ? "Search stock, check locations, record sales, and update quantities from one workspace."
+                ? "Search stock, check locations, receive materials, and update quantities from one workspace."
                 : "Search stock and check locations without crowding the visual map."}
             </p>
           </div>
@@ -363,6 +359,11 @@ export default function InventoryPage({ slug }: { slug: string }) {
                   <span className="inventory-item-name">
                     <small>{item.category}</small>
                     <b>{item.name}</b>
+                    <span
+                      className={`availability-badge availability-${availabilityFor(item)}`}
+                    >
+                      {availabilityLabel(item)}
+                    </span>
                     <small>
                       Updated {new Date(item.updated_at).toLocaleDateString()}
                     </small>
@@ -382,20 +383,9 @@ export default function InventoryPage({ slug }: { slug: string }) {
                   </output>
                   <span className="inventory-row-actions">
                     {permissions.adjustInventory ? (
-                      <>
-                        {salesReady && (
-                          <button
-                            className="sale-button"
-                            disabled={Number(item.quantity) <= 0}
-                            onClick={() => openAdjustment(item, "sold")}
-                          >
-                            Checkout / sale
-                          </button>
-                        )}
-                        <button onClick={() => openAdjustment(item, "used")}>
-                          Update stock
-                        </button>
-                      </>
+                      <button onClick={() => openAdjustment(item, "used")}>
+                        Update stock
+                      </button>
                     ) : (
                       <button onClick={() => navigate(`org/${slug}`)}>
                         View
@@ -463,9 +453,7 @@ export default function InventoryPage({ slug }: { slug: string }) {
             >
               ×
             </button>
-            <small>
-              {adjustEventKind === "sold" ? "RECORD SALE" : "UPDATE INVENTORY"}
-            </small>
+            <small>UPDATE INVENTORY</small>
             <h2>{adjusting.name}</h2>
             <p>
               Currently {adjusting.quantity} {adjusting.unit}
@@ -479,7 +467,6 @@ export default function InventoryPage({ slug }: { slug: string }) {
                   setAdjustEventKind(event.target.value as InventoryEventKind)
                 }
               >
-                <option value="sold">Item was sold</option>
                 <option value="used">Stock was used or removed</option>
                 <option value="added">Stock was received or returned</option>
                 <option value="counted">Set the exact counted quantity</option>
@@ -495,25 +482,6 @@ export default function InventoryPage({ slug }: { slug: string }) {
                 required
               />
             </label>
-            {adjustEventKind === "sold" && (
-              <div className="sale-details">
-                <label>
-                  Sold to / customer or job
-                  <input
-                    name="counterparty"
-                    placeholder="Customer, company, project, or job"
-                    required
-                  />
-                </label>
-                <label>
-                  Order or invoice reference
-                  <input
-                    name="reference"
-                    placeholder="Optional order, invoice, or receipt number"
-                  />
-                </label>
-              </div>
-            )}
             <label>
               Note
               <input
@@ -521,11 +489,7 @@ export default function InventoryPage({ slug }: { slug: string }) {
                 placeholder="Job, order, delivery, or reason"
               />
             </label>
-            <button className="save-button">
-              {adjustEventKind === "sold"
-                ? "Record sale and update stock"
-                : "Save inventory change"}
-            </button>
+            <button className="save-button">Save inventory change</button>
           </form>
         </div>
       )}

@@ -1,4 +1,5 @@
 import type { MouseEvent } from "react";
+import { availabilityClass, availabilityLabel } from "../lib/inventory";
 import type { RecordItem } from "../types";
 
 type Props = {
@@ -133,20 +134,20 @@ export default function PlanMapView({
         ).trim();
         return (
           <button
-          type="button"
-          className={`plan-record-pin map-pin ${record.id === selectedId ? "selected" : ""}`}
-          style={{
-            left: `${percentage(record.longitude)}%`,
-            top: `${percentage(record.latitude)}%`,
-          }}
-          title={`${pinNumber}. ${record.name}`}
-          aria-label={`${pinNumber}. ${record.name}`}
-          key={record.id}
-          onClick={(event) => {
-            event.stopPropagation();
-            onSelect?.(record.id);
-          }}
-        >
+            type="button"
+            className={`plan-record-pin map-pin ${availabilityClass(record)} ${record.id === selectedId ? "selected" : ""}`}
+            style={{
+              left: `${percentage(record.longitude)}%`,
+              top: `${percentage(record.latitude)}%`,
+            }}
+            title={`${pinNumber}. ${record.name}`}
+            aria-label={`${pinNumber}. ${record.name}`}
+            key={record.id}
+            onClick={(event) => {
+              event.stopPropagation();
+              onSelect?.(record.id);
+            }}
+          >
             <span className="pin-number">{pinNumber}</span>
             <span className="map-pin-preview">
               <b>{record.name}</b>
@@ -158,6 +159,7 @@ export default function PlanMapView({
                     ? ""
                     : `${record.quantity}${record.unit ? ` ${record.unit}` : ""}`,
                   location,
+                  availabilityLabel(record),
                 ]
                   .filter(Boolean)
                   .join(" · ")}

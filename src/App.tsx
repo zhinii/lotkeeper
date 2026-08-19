@@ -3,6 +3,8 @@ import InstallAppButton from "./components/InstallAppButton";
 import AdminPage from "./pages/AdminPage";
 import DirectoryPage from "./pages/DirectoryPage";
 import InventoryPage from "./pages/InventoryPage";
+import MoveItemPage from "./pages/MoveItemPage";
+import PosPage from "./pages/PosPage";
 import SitesPage from "./pages/SitesPage";
 import StaffPage from "./pages/StaffPage";
 import SubmitPage from "./pages/SubmitPage";
@@ -85,7 +87,7 @@ function HomePage() {
             </div>
           </div>
         </section>
-        <section className="product-two-jobs">
+        <section className="product-two-jobs product-core-modules">
           <article>
             <small>01 · VISUAL FINDER</small>
             <h2>See it, search it, locate it</h2>
@@ -107,9 +109,25 @@ function HomePage() {
               quantities, status, and a clear change history.
             </p>
             <ul>
-              <li>Receive, use, sell, and count inventory</li>
+              <li>Receive, use, and count inventory</li>
               <li>Category-first browsing and fast search</li>
               <li>Accountable updates and administrator alerts</li>
+            </ul>
+          </article>
+          <article>
+            <small>03 · CHECKOUT / POS</small>
+            <h2>Record the sale and update stock once</h2>
+            <p>
+              Employees build a multi-item checkout with customer, price, tax,
+              and reference details. Completing it updates every quantity and
+              preserves the sale history.
+            </p>
+            <ul>
+              <li>Permission-controlled checkout workspace</li>
+              <li>Multi-item cart, prices, tax, and customer reference</li>
+              <li>
+                Billing record without pretending to process card payments
+              </li>
             </ul>
           </article>
         </section>
@@ -177,6 +195,10 @@ export default function App() {
   if (parts[0] === "org" && parts[1]) return <DirectoryPage slug={parts[1]} />;
   if (parts[0] === "inventory" && parts[1])
     return <InventoryPage slug={parts[1]} />;
+  if (parts[0] === "pos" && parts[1])
+    return <PosPage slug={parts[1]} initialRecordId={parts[2] || null} />;
+  if (parts[0] === "move" && parts[1] && parts[2])
+    return <MoveItemPage slug={parts[1]} recordId={parts[2]} />;
   if (parts[0] === "submit" && parts[1])
     return <SubmitPage slug={parts[1]} recordId={parts[2] || null} />;
   return <HomePage />;

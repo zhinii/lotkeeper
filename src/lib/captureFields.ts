@@ -23,6 +23,13 @@ export const inventoryCaptureFields = [
     publicVisible: true,
   },
   {
+    key: "unit_price",
+    label: "Unit price",
+    placeholder: "Selling price per unit",
+    type: "number",
+    publicVisible: false,
+  },
+  {
     key: "location_code",
     label: "Storage location / bin",
     placeholder: "Yard A, aisle 4, bin 12",

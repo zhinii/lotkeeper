@@ -213,7 +213,9 @@ test("signed-in users explicitly choose an organization before tools open", asyn
   assert.match(staff, /Choose where you are working/);
   assert.match(staff, /staff-site-grid/);
   assert.match(staff, /Choose another organization/);
-  assert.match(staff, /Inventory & checkout/);
+  assert.match(staff, /Inventory tracker/);
+  assert.match(staff, /Checkout \/ POS/);
+  assert.match(staff, /selectedFeatures\.pos && selectedPermissions\.usePos/);
   assert.doesNotMatch(staff, /workspace-site-card/);
   assert.match(app, /<AdminPage initialSlug=/);
   assert.match(admin, /Nothing is opened automatically/);
@@ -271,7 +273,7 @@ test("database roles enforce platform, site, employee, and viewer access", async
   assert.match(permissions, /Site administrator/);
 });
 
-test("inventory tracker is separate, searchable, and audited", async () => {
+test("inventory tracker is separate from checkout, searchable, and audited", async () => {
   const inventory = await read("src/pages/InventoryPage.tsx");
   const permissions = await read("src/lib/permissions.ts");
   const schema = await read("supabase/schema.sql");
@@ -281,14 +283,10 @@ test("inventory tracker is separate, searchable, and audited", async () => {
   assert.match(inventory, /Find inventory/);
   assert.match(inventory, /Recent inventory activity/);
   assert.match(inventory, /Stock was received or returned/);
-  assert.match(inventory, /Record sale/);
-  assert.match(inventory, /Checkout \/ sale/);
-  assert.match(inventory, /Inventory and checkout/);
-  assert.match(inventory, /Sold to \/ customer or job/);
-  assert.match(inventory, /counterparty_text/);
-  assert.match(inventory, /salesReady/);
-  assert.match(inventory, /select\("counterparty"\)/);
-  assert.match(permissions, /Update inventory and record sales/);
+  assert.match(inventory, /Checkout \/ POS/);
+  assert.doesNotMatch(inventory, /counterparty_text/);
+  assert.doesNotMatch(inventory, /salesReady/);
+  assert.match(permissions, /Update inventory/);
   assert.match(schema, /create or replace function public\.adjust_inventory/);
   assert.match(schema, /actor_name/);
   assert.match(
@@ -298,6 +296,92 @@ test("inventory tracker is separate, searchable, and audited", async () => {
   assert.match(schema, /Not enough inventory is available for this sale/);
   assert.match(schema, /counterparty/);
   assert.match(schema, /reference_code/);
+});
+
+test("organizations select mapping, inventory, and POS as clear modules", async () => {
+  const admin = await read("src/pages/AdminPage.tsx");
+  const features = await read("src/lib/features.ts");
+  const staff = await read("src/pages/StaffPage.tsx");
+  const schema = await read("supabase/schema.sql");
+  assert.match(admin, /Choose the tools this organization uses/);
+  assert.match(admin, /Visual finder/);
+  assert.match(admin, /Inventory tracker/);
+  assert.match(admin, /Checkout \/ POS/);
+  assert.match(admin, /features: createFeatures/);
+  assert.match(admin, /pos_config: createPosConfig/);
+  assert.match(features, /defaultOrganizationFeatures/);
+  assert.match(staff, /selectedFeatures\.mapping/);
+  assert.match(schema, /features jsonb/);
+  assert.match(schema, /pos_config jsonb/);
+});
+
+test("multi-item checkout is permission controlled and atomically updates stock", async () => {
+  const app = await read("src/App.tsx");
+  const pos = await read("src/pages/PosPage.tsx");
+  const permissions = await read("src/lib/permissions.ts");
+  const migration = await read(
+    "supabase/migrations/20260819_product_modules_pos.sql",
+  );
+  assert.match(app, /<PosPage/);
+  assert.match(pos, /Build the sale, then confirm it/);
+  assert.match(pos, /cart_items/);
+  assert.match(pos, /Customer and billing/);
+  assert.match(pos, /payment processing remains external/);
+  assert.match(permissions, /usePos/);
+  assert.match(permissions, /viewSales/);
+  assert.match(migration, /create table if not exists public\.sales/);
+  assert.match(migration, /create table if not exists public\.sale_items/);
+  assert.match(migration, /for update/);
+  assert.match(migration, /if line_quantity>r\.quantity/);
+  assert.match(migration, /calculated_subtotal/);
+  assert.match(migration, /availability_status=next_availability/);
+});
+
+test("zero stock stays mapped with item-aware status and relocation history", async () => {
+  const directory = await read("src/pages/DirectoryPage.tsx");
+  const map = await read("src/components/MapView.tsx");
+  const planMap = await read("src/components/PlanMapView.tsx");
+  const move = await read("src/pages/MoveItemPage.tsx");
+  const inventory = await read("src/lib/inventory.ts");
+  const styles = await read("src/styles.css");
+  const migration = await read(
+    "supabase/migrations/20260819_product_modules_pos.sql",
+  );
+  assert.match(directory, /Out of stock \/ sold/);
+  assert.match(directory, /Relocate on map/);
+  assert.match(map, /availabilityClass/);
+  assert.match(planMap, /availabilityLabel/);
+  assert.match(inventory, /out_of_stock/);
+  assert.match(inventory, /sold/);
+  assert.match(styles, /map-pin\.availability-out_of_stock/);
+  assert.match(move, /old and new locations are/);
+  assert.match(move, /move_record/);
+  assert.match(
+    migration,
+    /create table if not exists public\.record_movements/,
+  );
+  assert.match(migration, /Relocation permission required/);
+  assert.match(
+    migration,
+    /when coalesce\(collection_kind,'consumable'\)='persistent' then 'sold'/,
+  );
+  assert.match(migration, /else 'out_of_stock'/);
+});
+
+test("prices and configurable private fields stay out of public record data", async () => {
+  const collections = await read("src/lib/collections.ts");
+  const admin = await read("src/pages/AdminPage.tsx");
+  const migration = await read(
+    "supabase/migrations/20260819_product_modules_pos.sql",
+  );
+  assert.match(collections, /\["sku", "unit_price"\]\.includes\(key\)/);
+  assert.match(admin, /nextPublicData/);
+  assert.match(admin, /nextPrivateData/);
+  assert.match(admin, /privateData/);
+  assert.match(admin, /record_private_data/);
+  assert.match(migration, /location_public/);
+  assert.match(migration, /field->>'publicVisible'/);
+  assert.match(migration, /private_data-'location_code'/);
 });
 
 test("inventory sales migration updates stock and keeps an audit trail", async () => {

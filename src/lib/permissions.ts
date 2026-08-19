@@ -31,8 +31,23 @@ export const employeePermissionOptions: Array<{
   },
   {
     key: "adjustInventory",
-    label: "Change inventory quantities",
-    help: "Record received, used, and counted stock with an audit trail.",
+    label: "Update inventory quantities",
+    help: "Receive, use, move, or count stock with a complete audit trail.",
+  },
+  {
+    key: "moveItems",
+    label: "Relocate items on the map",
+    help: "Move a pin or named storage location and keep the previous location in history.",
+  },
+  {
+    key: "usePos",
+    label: "Use checkout / POS",
+    help: "Create multi-item sales, identify the customer or job, and reduce stock.",
+  },
+  {
+    key: "viewSales",
+    label: "View sales and billing history",
+    help: "See organization-wide completed checkouts, totals, customers, and references.",
   },
 ];
 
@@ -42,6 +57,9 @@ export const employeeDefaults: MemberPermissions = {
   addItems: true,
   updateItems: true,
   adjustInventory: true,
+  moveItems: false,
+  usePos: false,
+  viewSales: false,
 };
 
 export const viewerDefaults: MemberPermissions = {
@@ -50,6 +68,9 @@ export const viewerDefaults: MemberPermissions = {
   addItems: false,
   updateItems: false,
   adjustInventory: false,
+  moveItems: false,
+  usePos: false,
+  viewSales: false,
 };
 
 export function normalizedRole(role?: MemberRole | null): MemberRole {
@@ -68,6 +89,9 @@ export function permissionsFor(
       addItems: true,
       updateItems: true,
       adjustInventory: true,
+      moveItems: true,
+      usePos: true,
+      viewSales: true,
     };
   const defaults = role === "employee" ? employeeDefaults : viewerDefaults;
   const configured = { ...defaults, ...(membership.permissions || {}) };
@@ -77,6 +101,9 @@ export function permissionsFor(
         addItems: false,
         updateItems: false,
         adjustInventory: false,
+        moveItems: false,
+        usePos: false,
+        viewSales: false,
       }
     : configured;
 }

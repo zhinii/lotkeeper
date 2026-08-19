@@ -12,6 +12,20 @@ export type MemberPermissions = {
   addItems: boolean;
   updateItems: boolean;
   adjustInventory: boolean;
+  moveItems: boolean;
+  usePos: boolean;
+  viewSales: boolean;
+};
+
+export type OrganizationFeatures = {
+  mapping: boolean;
+  inventory: boolean;
+  pos: boolean;
+};
+
+export type PosConfiguration = {
+  currency: string;
+  taxRate: number;
 };
 
 export type OrganizationMembership = {
@@ -58,6 +72,8 @@ export type Organization = {
     gridColumns?: number;
     label?: string;
   };
+  features?: Partial<OrganizationFeatures>;
+  pos_config?: Partial<PosConfiguration>;
   collections: CollectionDefinition[];
   ai_enabled: boolean;
   ai_catalog_context: string;
@@ -82,6 +98,7 @@ export type RecordItem = {
   photo_path: string;
   photo_taken_at: string | null;
   status: "active" | "archived" | "removed";
+  availability_status?: "available" | "out_of_stock" | "sold" | "unavailable";
   public_visible: boolean;
   version: number;
   updated_at: string;
@@ -163,4 +180,52 @@ export type InventoryTransaction = {
   counterparty: string | null;
   reference_code: string | null;
   created_at: string;
+};
+
+export type SaleRecord = {
+  id: string;
+  organization_id: string;
+  sale_number: string;
+  customer_name: string;
+  customer_contact: string | null;
+  reference_code: string | null;
+  subtotal: number;
+  tax_rate: number;
+  tax_amount: number;
+  total: number;
+  payment_method: string;
+  note: string | null;
+  status: "completed" | "voided";
+  created_by: string;
+  actor_name: string;
+  created_at: string;
+};
+
+export type SaleLineItem = {
+  id: string;
+  sale_id: string;
+  organization_id: string;
+  record_id: string | null;
+  item_name: string;
+  sku: string | null;
+  quantity: number;
+  unit: string | null;
+  unit_price: number;
+  line_total: number;
+};
+
+export type RecordMovement = {
+  id: string;
+  organization_id: string;
+  record_id: string;
+  moved_by: string;
+  actor_name: string;
+  from_latitude: number;
+  from_longitude: number;
+  to_latitude: number;
+  to_longitude: number;
+  from_location: string | null;
+  to_location: string | null;
+  note: string | null;
+  moved_at: string;
 };

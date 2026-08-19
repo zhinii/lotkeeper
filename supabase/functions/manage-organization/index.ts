@@ -13,6 +13,9 @@ type MemberPermissions = {
   addItems: boolean;
   updateItems: boolean;
   adjustInventory: boolean;
+  moveItems: boolean;
+  usePos: boolean;
+  viewSales: boolean;
 };
 
 const employeeDefaults: MemberPermissions = {
@@ -21,6 +24,9 @@ const employeeDefaults: MemberPermissions = {
   addItems: true,
   updateItems: true,
   adjustInventory: true,
+  moveItems: false,
+  usePos: false,
+  viewSales: false,
 };
 const viewerDefaults: MemberPermissions = {
   viewPrivate: false,
@@ -28,6 +34,9 @@ const viewerDefaults: MemberPermissions = {
   addItems: false,
   updateItems: false,
   adjustInventory: false,
+  moveItems: false,
+  usePos: false,
+  viewSales: false,
 };
 
 function memberAccess(roleValue: unknown, permissionValue: unknown) {
@@ -60,6 +69,9 @@ function memberAccess(roleValue: unknown, permissionValue: unknown) {
               addItems: false,
               updateItems: false,
               adjustInventory: false,
+              moveItems: false,
+              usePos: false,
+              viewSales: false,
             }
           : permissions,
   };

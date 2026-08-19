@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import AppHeader from "../components/AppHeader";
+import { featuresFor } from "../lib/features";
 import { permissionsFor, roleLabel } from "../lib/permissions";
 import { navigate } from "../lib/route";
 import { requireSupabase } from "../lib/supabase";
@@ -11,6 +12,8 @@ export default function StaffPage() {
   const [memberships, setMemberships] = useState<
     Record<string, OrganizationMembership>
   >({});
+  const [selectedOrganizationId, setSelectedOrganizationId] = useState("");
+  const [loadingOrganizations, setLoadingOrganizations] = useState(false);
   const [message, setMessage] = useState("");
 
   useEffect(() => {
@@ -21,8 +24,14 @@ export default function StaffPage() {
   }, []);
 
   useEffect(() => {
-    if (!session) return;
+    if (!session) {
+      setOrganizations([]);
+      setMemberships({});
+      setSelectedOrganizationId("");
+      return;
+    }
     const client = requireSupabase();
+    setLoadingOrganizations(true);
     Promise.all([
       client.from("organizations").select("*").order("name"),
       client
@@ -32,8 +41,7 @@ export default function StaffPage() {
       client.from("platform_admins").select("user_id").limit(1),
     ]).then(([orgRows, memberRows, platformRows]) => {
       if (orgRows.error) setMessage(orgRows.error.message);
-      const organizations = (orgRows.data || []) as Organization[];
-      setOrganizations(organizations);
+      const availableOrganizations = (orgRows.data || []) as Organization[];
       const assigned = Object.fromEntries(
         ((memberRows.data || []) as OrganizationMembership[]).map((item) => [
           item.organization_id,
@@ -41,7 +49,7 @@ export default function StaffPage() {
         ]),
       );
       if (platformRows.data?.length)
-        organizations.forEach((organization) => {
+        availableOrganizations.forEach((organization) => {
           assigned[organization.id] = {
             organization_id: organization.id,
             user_id: session.user.id,
@@ -49,7 +57,21 @@ export default function StaffPage() {
             permissions: {},
           };
         });
+      const assignedOrganizations = platformRows.data?.length
+        ? availableOrganizations
+        : availableOrganizations.filter(
+            (organization) => assigned[organization.id],
+          );
+      setOrganizations(assignedOrganizations);
       setMemberships(assigned);
+      setSelectedOrganizationId((current) =>
+        assignedOrganizations.some(
+          (organization) => organization.id === current,
+        )
+          ? current
+          : "",
+      );
+      setLoadingOrganizations(false);
     });
   }, [session]);
 
@@ -117,6 +139,15 @@ export default function StaffPage() {
     );
   }
 
+  const selectedOrganization = organizations.find(
+    (organization) => organization.id === selectedOrganizationId,
+  );
+  const selectedMembership = selectedOrganization
+    ? memberships[selectedOrganization.id]
+    : null;
+  const selectedPermissions = permissionsFor(selectedMembership);
+  const selectedFeatures = featuresFor(selectedOrganization);
+
   return (
     <div className="staff-page">
       <AppHeader context="My sites" backTo="home">
@@ -126,53 +157,118 @@ export default function StaffPage() {
         </button>
       </AppHeader>
       <main className="staff-organizations">
-        <small>YOUR SITES</small>
-        <h1>Choose where you are working</h1>
-        <div className="organization-grid">
-          {organizations.map((organization) => {
-            const membership = memberships[organization.id];
-            const permissions = permissionsFor(membership);
-            return (
-              <article className="workspace-site-card" key={organization.id}>
-                <span className="organization-pin" aria-hidden="true">
-                  ●
-                </span>
-                <div>
-                  <strong>{organization.name}</strong>
-                  <small>
-                    {membership ? roleLabel(membership.role) : "Public viewer"}{" "}
-                    · {organization.collections.length} item groups
-                  </small>
-                </div>
-                <div className="workspace-site-actions">
-                  <button onClick={() => navigate(`org/${organization.slug}`)}>
-                    Visual finder
+        {!selectedOrganization ? (
+          <>
+            <small>YOUR ORGANIZATIONS</small>
+            <h1>Choose where you are working</h1>
+            <p className="staff-choice-intro">
+              Select an organization before opening its finder, inventory, or
+              management tools.
+            </p>
+            {loadingOrganizations ? (
+              <div className="friendly-empty">Loading your organizations…</div>
+            ) : (
+              <div className="staff-site-grid">
+                {organizations.map((organization) => {
+                  const membership = memberships[organization.id];
+                  return (
+                    <button
+                      className="staff-site-choice"
+                      key={organization.id}
+                      onClick={() => setSelectedOrganizationId(organization.id)}
+                    >
+                      <span className="organization-pin" aria-hidden="true" />
+                      <span>
+                        <strong>{organization.name}</strong>
+                        <small>
+                          {roleLabel(membership?.role)} ·{" "}
+                          {organization.collections.length} item groups
+                        </small>
+                      </span>
+                      <b aria-hidden="true">→</b>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </>
+        ) : (
+          <>
+            <button
+              className="staff-change-site"
+              onClick={() => setSelectedOrganizationId("")}
+            >
+              ← Choose another organization
+            </button>
+            <section className="staff-workspace-heading">
+              <span className="organization-pin" aria-hidden="true" />
+              <div>
+                <small>{roleLabel(selectedMembership?.role)}</small>
+                <h1>{selectedOrganization.name}</h1>
+                <p>Choose what you need to do.</p>
+              </div>
+            </section>
+            <div className="staff-workspace-actions">
+              {selectedFeatures.mapping && (
+                <button
+                  onClick={() => navigate(`org/${selectedOrganization.slug}`)}
+                >
+                  <span>⌖</span>
+                  <b>Visual finder</b>
+                  <small>Search photos, details, and mapped locations.</small>
+                </button>
+              )}
+              {selectedFeatures.inventory &&
+                selectedPermissions.viewInventory && (
+                  <button
+                    onClick={() =>
+                      navigate(`inventory/${selectedOrganization.slug}`)
+                    }
+                  >
+                    <span>▦</span>
+                    <b>Inventory tracker</b>
+                    <small>
+                      Check stock, SKUs, locations, and quantity history.
+                    </small>
                   </button>
-                  {permissions.viewInventory && (
-                    <button
-                      onClick={() => navigate(`inventory/${organization.slug}`)}
-                    >
-                      Inventory
-                    </button>
-                  )}
-                  {permissions.addItems && (
-                    <button
-                      onClick={() => navigate(`submit/${organization.slug}`)}
-                    >
-                      Add item
-                    </button>
-                  )}
-                  {membership?.role === "admin" && (
-                    <button onClick={() => navigate("admin")}>
-                      Site settings
-                    </button>
-                  )}
-                </div>
-              </article>
-            );
-          })}
-        </div>
-        {!organizations.length && (
+                )}
+              {selectedFeatures.pos && selectedPermissions.usePos && (
+                <button
+                  onClick={() => navigate(`pos/${selectedOrganization.slug}`)}
+                >
+                  <span>▤</span>
+                  <b>Checkout / POS</b>
+                  <small>
+                    Build a sale and update every stock item together.
+                  </small>
+                </button>
+              )}
+              {selectedFeatures.mapping && selectedPermissions.addItems && (
+                <button
+                  onClick={() =>
+                    navigate(`submit/${selectedOrganization.slug}`)
+                  }
+                >
+                  <span>＋</span>
+                  <b>Add an item</b>
+                  <small>Capture a photo and send the item for review.</small>
+                </button>
+              )}
+              {selectedMembership?.role === "admin" && (
+                <button
+                  onClick={() => navigate(`admin/${selectedOrganization.slug}`)}
+                >
+                  <span>⚙</span>
+                  <b>Admin console</b>
+                  <small>
+                    Review, manage people, and change site settings.
+                  </small>
+                </button>
+              )}
+            </div>
+          </>
+        )}
+        {!loadingOrganizations && !organizations.length && (
           <div className="empty">
             <h2>No assigned sites</h2>
             <p>Ask an administrator to add this account to an organization.</p>

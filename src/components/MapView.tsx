@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { availabilityClass, availabilityLabel } from "../lib/inventory";
 import type { RecordItem } from "../types";
 
 type Props = {
@@ -240,7 +241,7 @@ export default function MapView({
       )
         return [];
       const node = document.createElement("button");
-      node.className = `map-pin ${record.id === selectedId ? "selected" : ""}`;
+      node.className = `map-pin ${availabilityClass(record)} ${record.id === selectedId ? "selected" : ""}`;
       const pinNumber = pinNumbers[record.id] ?? index + 1;
       const number = document.createElement("span");
       number.className = "pin-number";
@@ -265,6 +266,7 @@ export default function MapView({
           ? ""
           : `${record.quantity}${record.unit ? ` ${record.unit}` : ""}`,
         location,
+        availabilityLabel(record),
       ]
         .filter(Boolean)
         .join(" · ");

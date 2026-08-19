@@ -4,6 +4,7 @@ const labels: Record<string, string> = {
   sku: "SKU / asset ID",
   quantity: "Quantity",
   unit: "Unit",
+  unit_price: "Unit price",
   location_code: "Storage location / bin",
   condition: "Condition",
   manufacturer: "Manufacturer / brand",
@@ -12,15 +13,18 @@ const labels: Record<string, string> = {
 const inventoryFields: FieldDefinition[] = Object.keys(labels).map((key) => ({
   key,
   label: labels[key],
-  type: key === "quantity" ? "number" : "text",
+  type: key === "quantity" || key === "unit_price" ? "number" : "text",
   required: false,
-  publicVisible: key !== "sku",
+  publicVisible: !["sku", "unit_price"].includes(key),
   publicSubmit: false,
   searchable: true,
 }));
 
 const assetFields = inventoryFields.filter(
-  (field) => field.key !== "quantity" && field.key !== "unit",
+  (field) =>
+    field.key !== "quantity" &&
+    field.key !== "unit" &&
+    field.key !== "unit_price",
 );
 
 function fields(source: FieldDefinition[]) {

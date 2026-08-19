@@ -10,6 +10,12 @@ import {
 } from "../lib/captureFields";
 import { materialDefaults } from "../lib/collections";
 import {
+  defaultOrganizationFeatures,
+  defaultPosConfiguration,
+  featuresFor,
+  posConfigurationFor,
+} from "../lib/features";
+import {
   employeeDefaults,
   employeePermissionOptions,
   permissionsFor,
@@ -21,6 +27,8 @@ import type {
   AlertItem,
   CollectionDefinition,
   Organization,
+  OrganizationFeatures,
+  PosConfiguration,
   RecordItem,
   SearchEvent,
   Submission,
@@ -118,7 +126,11 @@ function parseCsv(text: string) {
     );
 }
 
-export default function AdminPage() {
+export default function AdminPage({
+  initialSlug,
+}: {
+  initialSlug: string | null;
+}) {
   const [session, setSession] = useState<any>(null);
   const [isPlatformAdmin, setIsPlatformAdmin] = useState(false);
   const [organizations, setOrganizations] = useState<Organization[]>([]);
@@ -161,7 +173,19 @@ export default function AdminPage() {
   const [editPublic, setEditPublic] = useState(false);
   const [editAi, setEditAi] = useState(false);
   const [editAiContext, setEditAiContext] = useState("");
+  const [editFeatures, setEditFeatures] = useState<OrganizationFeatures>(
+    defaultOrganizationFeatures,
+  );
+  const [editPosConfig, setEditPosConfig] = useState<PosConfiguration>(
+    defaultPosConfiguration,
+  );
   const [createPublic, setCreatePublic] = useState(true);
+  const [createFeatures, setCreateFeatures] = useState<OrganizationFeatures>(
+    defaultOrganizationFeatures,
+  );
+  const [createPosConfig, setCreatePosConfig] = useState<PosConfiguration>(
+    defaultPosConfiguration,
+  );
   const [createCollections, setCreateCollections] = useState<
     CollectionDefinition[]
   >(() => cloneCollections(materialDefaults));
@@ -188,12 +212,14 @@ export default function AdminPage() {
   useEffect(() => {
     const client = requireSupabase();
     client.auth.getSession().then(({ data }) => setSession(data.session));
-    return client.auth.onAuthStateChange((_event, next) => setSession(next))
-      .data.subscription.unsubscribe;
+    return client.auth.onAuthStateChange((_event, next) => {
+      setSession(next);
+      if (!next) setSelected(null);
+    }).data.subscription.unsubscribe;
   }, []);
   useEffect(() => {
     if (session) loadOrganizations();
-  }, [session]);
+  }, [session, initialSlug]);
   useEffect(() => {
     if (selected) {
       setEditCollections(cloneCollections(selected.collections));
@@ -221,6 +247,8 @@ export default function AdminPage() {
       setEditPublic(selected.public_access);
       setEditAi(selected.ai_enabled);
       setEditAiContext(selected.ai_catalog_context || "");
+      setEditFeatures(featuresFor(selected));
+      setEditPosConfig(posConfigurationFor(selected));
       setImportPoint({
         latitude: selected.map_mode === "gps" ? selected.center_lat : 50,
         longitude: selected.map_mode === "gps" ? selected.center_lng : 50,
@@ -275,18 +303,47 @@ export default function AdminPage() {
   }
   async function loadOrganizations() {
     const client = requireSupabase();
-    const [{ data, error }, { data: platformRows }] = await Promise.all([
-      client.from("organizations").select("*").order("name"),
-      client.from("platform_admins").select("user_id").limit(1),
-    ]);
-    if (error) return setMessage(error.message);
-    setIsPlatformAdmin(Boolean(platformRows?.length));
-    const rows = (data || []) as Organization[];
+    const [{ data, error }, { data: platformRows }, { data: memberRows }] =
+      await Promise.all([
+        client.from("organizations").select("*").order("name"),
+        client.from("platform_admins").select("user_id").limit(1),
+        client
+          .from("organization_members")
+          .select("organization_id,role")
+          .eq("user_id", session?.user?.id || ""),
+      ]);
+    if (error) {
+      setMessage(error.message);
+      return [] as Organization[];
+    }
+    const platformAdmin = Boolean(platformRows?.length);
+    setIsPlatformAdmin(platformAdmin);
+    const adminOrganizationIds = new Set(
+      (memberRows || [])
+        .filter((membership) => membership.role === "admin")
+        .map((membership) => membership.organization_id),
+    );
+    const rows = ((data || []) as Organization[]).filter(
+      (organization) =>
+        platformAdmin ||
+        organization.created_by === session?.user?.id ||
+        adminOrganizationIds.has(organization.id),
+    );
     setOrganizations(rows);
     setSelected(
       (current) =>
-        rows.find((item) => item.id === current?.id) || rows[0] || null,
+        rows.find((item) => item.id === current?.id) ||
+        (initialSlug
+          ? rows.find((item) => item.slug === initialSlug) || null
+          : null),
     );
+    return rows;
+  }
+
+  function chooseOrganization(organization: Organization | null) {
+    setSelected(organization);
+    setTab("overview");
+    setMessage("");
   }
   async function loadWorkspace(organizationId: string) {
     const client = requireSupabase();
@@ -385,13 +442,16 @@ export default function AdminPage() {
             gridColumns: createMap.gridColumns,
             label: createMap.label,
           },
+          features: createFeatures,
+          pos_config: createPosConfig,
         })
         .eq("id", newId);
       if (setupError) return setMessage(setupError.message);
     }
+    const rows = await loadOrganizations();
+    setSelected(rows.find((organization) => organization.id === newId) || null);
     setMessage("Organization created.");
     setTab("overview");
-    await loadOrganizations();
   }
   async function saveConfiguration() {
     if (!selected) return;
@@ -419,6 +479,8 @@ export default function AdminPage() {
         public_access: editPublic,
         ai_enabled: editAi,
         ai_catalog_context: editAiContext.trim(),
+        features: editFeatures,
+        pos_config: editPosConfig,
         center_lat: editMap.latitude,
         center_lng: editMap.longitude,
         map_zoom: editMap.zoom,
@@ -434,7 +496,7 @@ export default function AdminPage() {
       .eq("id", selected.id);
     if (error) return setMessage(error.message);
     setEditMapFile(null);
-    setMessage("People, map, access, AI, and item settings saved.");
+    setMessage("Modules, people, map, access, AI, and item settings saved.");
     await loadOrganizations();
   }
 
@@ -711,13 +773,16 @@ export default function AdminPage() {
     const configuredCollection = selected?.collections.find(
       (collection) => collection.id === nextCollectionId,
     );
-    const nextData: Record<string, unknown> = { ...item.data };
+    const nextPublicData: Record<string, unknown> = {};
+    const nextPrivateData: Record<string, unknown> = {};
     for (const field of configuredCaptureFields(configuredCollection || null)) {
       if (field.key === "quantity" || field.key === "unit") continue;
-      nextData[field.key] =
+      const value =
         field.type === "boolean"
           ? form.get(field.key) === "on"
           : String(form.get(field.key) || "").trim();
+      (field.publicVisible ? nextPublicData : nextPrivateData)[field.key] =
+        value;
     }
     const { error } = await client
       .from("records")
@@ -727,17 +792,33 @@ export default function AdminPage() {
         description: String(form.get("description") || "").trim(),
         category: String(form.get("category") || "").trim() || "Uncategorized",
         quantity,
+        availability_status:
+          quantity === null || quantity > 0
+            ? "available"
+            : configuredCollection?.kind === "persistent"
+              ? "unavailable"
+              : "out_of_stock",
         unit: String(form.get("unit") || "").trim() || null,
         latitude: Number(form.get("latitude")),
         longitude: Number(form.get("longitude")),
         public_visible: form.get("public_visible") === "on",
-        data: nextData,
+        data: nextPublicData,
         version: item.version + 1,
         updated_at: new Date().toISOString(),
         updated_by: user.user?.id || null,
       })
       .eq("id", item.id);
     if (error) return setMessage(error.message);
+    const { error: privateError } = await client
+      .from("record_private_data")
+      .upsert({
+        record_id: item.id,
+        organization_id: item.organization_id,
+        data: nextPrivateData,
+        updated_by: user.user?.id || null,
+        updated_at: new Date().toISOString(),
+      });
+    if (privateError) return setMessage(privateError.message);
     if (quantity !== item.quantity && quantity !== null && user.user) {
       await client.from("inventory_transactions").insert({
         organization_id: item.organization_id,
@@ -773,7 +854,7 @@ export default function AdminPage() {
     const defaultLocation = String(form.get("default_location") || "").trim();
     const defaultPublic = form.get("public_visible") === "on";
     const { data: user } = await requireSupabase().auth.getUser();
-    const payload = rows
+    const importRows = rows
       .map((row) => {
         const name = row.name || row.item_name || row.item || row.description;
         if (!name) return null;
@@ -789,46 +870,93 @@ export default function AdminPage() {
           row.public_visible ||
           ""
         ).toLowerCase();
+        const recordId = crypto.randomUUID();
+        const allData: Record<string, unknown> = {
+          sku: row.sku || row.sku_number || row.asset_id || "",
+          location_code:
+            row.location || row.location_code || row.bin || defaultLocation,
+          manufacturer: row.manufacturer || row.brand || "",
+          condition: row.condition || "",
+          lot_serial: row.lot_serial || row.serial || row.serial_number || "",
+          unit_price: row.unit_price || row.price || row.sale_price || "",
+        };
+        const publicData: Record<string, unknown> = {};
+        const privateData: Record<string, unknown> = {};
+        collection.fields.forEach((field) => {
+          if (field.key === "quantity" || field.key === "unit") return;
+          (field.publicVisible ? publicData : privateData)[field.key] =
+            allData[field.key] ?? row[field.key] ?? "";
+        });
         return {
-          organization_id: selected.id,
-          collection_id: row.collection_id || collectionId,
-          name,
-          description: row.description || "",
-          keywords: String(row.keywords || row.tags || "")
-            .split(/[|;,]/)
-            .map((item) => item.trim())
-            .filter(Boolean),
-          category: row.category || collection.name,
-          data: {
-            sku: row.sku || row.sku_number || row.asset_id || "",
-            location_code:
-              row.location || row.location_code || row.bin || defaultLocation,
-            manufacturer: row.manufacturer || row.brand || "",
-            condition: row.condition || "",
-            lot_serial: row.lot_serial || row.serial || row.serial_number || "",
+          privateData,
+          record: {
+            id: recordId,
+            organization_id: selected.id,
+            collection_id: collectionId,
+            name,
+            description: row.description || "",
+            keywords: String(row.keywords || row.tags || "")
+              .split(/[|;,]/)
+              .map((item) => item.trim())
+              .filter(Boolean),
+            category: row.category || collection.name,
+            data: publicData,
+            quantity:
+              quantityText === "" || quantityText == null
+                ? null
+                : Number(quantityText),
+            unit: row.unit || null,
+            availability_status:
+              quantityText === "" ||
+              quantityText == null ||
+              Number(quantityText) > 0
+                ? "available"
+                : collection.kind === "persistent"
+                  ? "unavailable"
+                  : "out_of_stock",
+            latitude: Number.isFinite(latitude)
+              ? latitude
+              : importPoint.latitude,
+            longitude: Number.isFinite(longitude)
+              ? longitude
+              : importPoint.longitude,
+            location_source: "manual_pin",
+            photo_path: null,
+            public_visible: publicText
+              ? !["false", "no", "0", "private"].includes(publicText)
+              : defaultPublic,
+            updated_by: user.user?.id || null,
           },
-          quantity:
-            quantityText === "" || quantityText == null
-              ? null
-              : Number(quantityText),
-          unit: row.unit || null,
-          latitude: Number.isFinite(latitude) ? latitude : importPoint.latitude,
-          longitude: Number.isFinite(longitude)
-            ? longitude
-            : importPoint.longitude,
-          location_source: "manual_pin",
-          photo_path: null,
-          public_visible: publicText
-            ? !["false", "no", "0", "private"].includes(publicText)
-            : defaultPublic,
-          updated_by: user.user?.id || null,
         };
       })
-      .filter(Boolean) as Array<Record<string, unknown>>;
-    if (!payload.length) return setMessage("No rows contained an item name.");
-    const { error } = await requireSupabase().from("records").insert(payload);
+      .filter(Boolean) as Array<{
+      privateData: Record<string, unknown>;
+      record: Record<string, unknown>;
+    }>;
+    if (!importRows.length)
+      return setMessage("No rows contained an item name.");
+    const { error } = await requireSupabase()
+      .from("records")
+      .insert(importRows.map((item) => item.record));
     if (error) return setMessage(error.message);
-    setMessage(`Imported ${payload.length} items as mapped inventory pins.`);
+    const privateRows = importRows
+      .filter((item) => Object.keys(item.privateData).length)
+      .map((item) => ({
+        record_id: String(item.record.id),
+        organization_id: selected.id,
+        data: item.privateData,
+        updated_by: user.user?.id || null,
+      }));
+    if (privateRows.length) {
+      const { error: privateError } = await requireSupabase()
+        .from("record_private_data")
+        .insert(privateRows);
+      if (privateError)
+        return setMessage(
+          `Items were imported, but private fields need attention: ${privateError.message}`,
+        );
+    }
+    setMessage(`Imported ${importRows.length} items as mapped inventory pins.`);
     event.currentTarget.reset();
     await loadWorkspace(selected.id);
   }
@@ -978,6 +1106,7 @@ export default function AdminPage() {
             <button
               className={tab === item.id ? "active" : ""}
               onClick={() => setTab(item.id)}
+              disabled={!selected && item.id !== "overview"}
               key={item.id}
             >
               <span aria-hidden="true">{item.icon}</span>
@@ -995,30 +1124,35 @@ export default function AdminPage() {
           Sign out
         </button>
       </header>
-      <div className="admin-orgbar">
-        <label>
-          <small>MANAGING</small>
-          <select
-            aria-label="Organization"
-            value={selected?.id || ""}
-            disabled={!organizations.length}
-            onChange={(event) =>
-              setSelected(
-                organizations.find((item) => item.id === event.target.value) ||
-                  null,
-              )
-            }
-          >
-            {!organizations.length && (
-              <option value="">No organizations yet</option>
-            )}
-            {organizations.map((item) => (
-              <option key={item.id} value={item.id}>
-                {item.name}
-              </option>
-            ))}
-          </select>
-        </label>
+      <div className={`admin-orgbar${selected ? " selected" : ""}`}>
+        {selected ? (
+          <label>
+            <small>MANAGING</small>
+            <select
+              aria-label="Organization"
+              value={selected.id}
+              onChange={(event) =>
+                chooseOrganization(
+                  organizations.find(
+                    (item) => item.id === event.target.value,
+                  ) || null,
+                )
+              }
+            >
+              <option value="">Choose another organization</option>
+              {organizations.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : (
+          <div className="admin-org-prompt">
+            <small>ORGANIZATION REQUIRED</small>
+            <b>Choose an organization before opening management tools.</b>
+          </div>
+        )}
         {isPlatformAdmin && (
           <button className="admin-new-org" onClick={() => setTab("create")}>
             + New organization
@@ -1035,7 +1169,35 @@ export default function AdminPage() {
       </div>
       <main className="admin-main">
         <p className="notice">{message}</p>
-        {tab === "overview" && !selected && (
+        {tab === "overview" && !selected && organizations.length > 0 && (
+          <section className="admin-organization-picker panel">
+            <small>YOUR ORGANIZATIONS</small>
+            <h1>Choose an organization</h1>
+            <p>
+              Nothing is opened automatically. Select the organization you want
+              to review or manage.
+            </p>
+            <div className="admin-organization-grid">
+              {organizations.map((organization) => (
+                <button
+                  key={organization.id}
+                  onClick={() => chooseOrganization(organization)}
+                >
+                  <span className="organization-pin" aria-hidden="true" />
+                  <span>
+                    <b>{organization.name}</b>
+                    <small>
+                      {organization.collections.length} item groups ·{" "}
+                      {organization.public_access ? "Public" : "Private"}
+                    </small>
+                  </span>
+                  <i aria-hidden="true">→</i>
+                </button>
+              ))}
+            </div>
+          </section>
+        )}
+        {tab === "overview" && !selected && !organizations.length && (
           <section className="admin-empty-state panel">
             <small>GET STARTED</small>
             <h1>Create your first organization</h1>
@@ -1084,14 +1246,28 @@ export default function AdminPage() {
                 </span>
                 <i>→</i>
               </button>
-              <button onClick={() => navigate(`inventory/${selected.slug}`)}>
-                <span className="task-icon items">#</span>
-                <span>
-                  <b>Open inventory tracker</b>
-                  <small>Stock levels, adjustments, and history</small>
-                </span>
-                <i>→</i>
-              </button>
+              {featuresFor(selected).inventory && (
+                <button onClick={() => navigate(`inventory/${selected.slug}`)}>
+                  <span className="task-icon items">#</span>
+                  <span>
+                    <b>Open inventory tracker</b>
+                    <small>Stock levels, adjustments, and history</small>
+                  </span>
+                  <i>→</i>
+                </button>
+              )}
+              {featuresFor(selected).pos && (
+                <button onClick={() => navigate(`pos/${selected.slug}`)}>
+                  <span className="task-icon items">▤</span>
+                  <span>
+                    <b>Open checkout / POS</b>
+                    <small>
+                      Multi-item sales, billing details, and stock updates
+                    </small>
+                  </span>
+                  <i>→</i>
+                </button>
+              )}
               <button onClick={() => setTab("configure")}>
                 <span className="task-icon settings">⚙</span>
                 <span>
@@ -1100,14 +1276,16 @@ export default function AdminPage() {
                 </span>
                 <i>→</i>
               </button>
-              <button onClick={() => navigate(`org/${selected.slug}`)}>
-                <span className="task-icon site">↗</span>
-                <span>
-                  <b>View the public site</b>
-                  <small>See what visitors see</small>
-                </span>
-                <i>→</i>
-              </button>
+              {featuresFor(selected).mapping && (
+                <button onClick={() => navigate(`org/${selected.slug}`)}>
+                  <span className="task-icon site">↗</span>
+                  <span>
+                    <b>Open visual finder</b>
+                    <small>See the catalog, map, pins, and item status</small>
+                  </span>
+                  <i>→</i>
+                </button>
+              )}
             </div>
             <h2 className="admin-section-label">At a glance</h2>
             <div className="metric-grid">
@@ -1531,7 +1709,7 @@ export default function AdminPage() {
                   <p className="csv-columns">
                     Recognized columns: name, description, SKU, quantity, unit,
                     category, location, latitude, longitude, public, keywords,
-                    manufacturer, condition and serial.
+                    manufacturer, condition, serial and unit price.
                   </p>
                   <button className="save-button">Import inventory</button>
                 </form>
@@ -1844,6 +2022,95 @@ export default function AdminPage() {
             <section className="settings-section">
               <div className="settings-step">1</div>
               <div className="settings-content">
+                <h2>Choose the tools this organization uses</h2>
+                <p>
+                  Each module has its own workspace. Enable only what this site
+                  needs so employees are not shown unrelated tools.
+                </p>
+                <div className="module-choice-grid">
+                  {[
+                    {
+                      key: "mapping" as const,
+                      icon: "⌖",
+                      title: "Visual finder",
+                      help: "Photos, search, maps, pins, capture, and relocation.",
+                    },
+                    {
+                      key: "inventory" as const,
+                      icon: "▦",
+                      title: "Inventory tracker",
+                      help: "SKUs, quantities, stock counts, receiving, and history.",
+                    },
+                    {
+                      key: "pos" as const,
+                      icon: "▤",
+                      title: "Checkout / POS",
+                      help: "A multi-item sale that updates stock and records billing details.",
+                    },
+                  ].map((module) => (
+                    <label
+                      className={editFeatures[module.key] ? "selected" : ""}
+                      key={module.key}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={editFeatures[module.key]}
+                        onChange={(event) =>
+                          setEditFeatures((current) => ({
+                            ...current,
+                            [module.key]: event.target.checked,
+                          }))
+                        }
+                      />
+                      <span aria-hidden="true">{module.icon}</span>
+                      <b>{module.title}</b>
+                      <small>{module.help}</small>
+                    </label>
+                  ))}
+                </div>
+                {editFeatures.pos && (
+                  <div className="pos-settings panel">
+                    <label>
+                      Currency code
+                      <input
+                        value={editPosConfig.currency}
+                        maxLength={3}
+                        onChange={(event) =>
+                          setEditPosConfig((current) => ({
+                            ...current,
+                            currency: event.target.value.toUpperCase(),
+                          }))
+                        }
+                        pattern="[A-Z]{3}"
+                      />
+                    </label>
+                    <label>
+                      Default tax rate (%)
+                      <input
+                        type="number"
+                        min="0"
+                        max="100"
+                        step="0.01"
+                        value={editPosConfig.taxRate}
+                        onChange={(event) =>
+                          setEditPosConfig((current) => ({
+                            ...current,
+                            taxRate: Number(event.target.value),
+                          }))
+                        }
+                      />
+                    </label>
+                    <small>
+                      Material Pin records a checkout and inventory change. It
+                      does not process a card payment.
+                    </small>
+                  </div>
+                )}
+              </div>
+            </section>
+            <section className="settings-section">
+              <div className="settings-step">2</div>
+              <div className="settings-content">
                 <h2>Lists and information</h2>
                 <p>
                   Create the lists people browse, such as parks, equipment or
@@ -1864,7 +2131,7 @@ export default function AdminPage() {
               </div>
             </section>
             <section className="settings-section">
-              <div className="settings-step">2</div>
+              <div className="settings-step">3</div>
               <div className="settings-content">
                 <h2>People and permissions</h2>
                 <p>
@@ -1933,7 +2200,7 @@ export default function AdminPage() {
                       <p className="role-access-summary">
                         Site administrators have full access to this site,
                         including settings, people, approvals, items, and
-                        inventory.
+                        inventory, relocation, checkout, and sales history.
                       </p>
                     ) : (
                       employeePermissionOptions
@@ -2043,7 +2310,8 @@ export default function AdminPage() {
                               {draftRole === "admin" ? (
                                 <p className="role-access-summary">
                                   This person can manage this site’s settings,
-                                  people, approvals, items, and inventory.
+                                  people, approvals, items, inventory,
+                                  relocation, checkout, and sales history.
                                 </p>
                               ) : (
                                 employeePermissionOptions
@@ -2101,7 +2369,7 @@ export default function AdminPage() {
               </div>
             </section>
             <section className="settings-section">
-              <div className="settings-step">3</div>
+              <div className="settings-step">4</div>
               <div className="settings-content">
                 <h2>Access and photo help</h2>
                 <p>Choose who can open the site and how photos are reviewed.</p>
@@ -2175,20 +2443,30 @@ export default function AdminPage() {
               </div>
             </section>
             <section className="settings-section map-settings-section">
-              <div className="settings-step">4</div>
+              <div className="settings-step">5</div>
               <div className="settings-content">
-                <OrganizationMapEditor
-                  value={editMap}
-                  onChange={setEditMap}
-                  onImageSelected={(file) => {
-                    setEditMapFile(file);
-                    setEditMap((current) => ({
-                      ...current,
-                      mode: "image",
-                      imageUrl: URL.createObjectURL(file),
-                    }));
-                  }}
-                />
+                {editFeatures.mapping ? (
+                  <OrganizationMapEditor
+                    value={editMap}
+                    onChange={setEditMap}
+                    onImageSelected={(file) => {
+                      setEditMapFile(file);
+                      setEditMap((current) => ({
+                        ...current,
+                        mode: "image",
+                        imageUrl: URL.createObjectURL(file),
+                      }));
+                    }}
+                  />
+                ) : (
+                  <div className="schema-note">
+                    <b>Visual finder is turned off.</b>
+                    <span>
+                      Enable the Visual finder module above before configuring a
+                      street map, uploaded site plan, or grid.
+                    </span>
+                  </div>
+                )}
               </div>
             </section>
             {(isPlatformAdmin || selected.created_by === session?.user?.id) && (
@@ -2265,6 +2543,90 @@ export default function AdminPage() {
                     <small>Turn this off when it is only for staff.</small>
                   </span>
                 </label>
+                <div className="create-module-picker">
+                  <h3>Organization tools</h3>
+                  <p>Start with only the workspaces this organization needs.</p>
+                  <div className="module-choice-grid">
+                    {[
+                      [
+                        "mapping",
+                        "⌖",
+                        "Visual finder",
+                        "Searchable photos, maps, pins, and capture.",
+                      ],
+                      [
+                        "inventory",
+                        "▦",
+                        "Inventory tracker",
+                        "SKUs, stock quantities, counts, and history.",
+                      ],
+                      [
+                        "pos",
+                        "▤",
+                        "Checkout / POS",
+                        "Sales, customer references, totals, and stock updates.",
+                      ],
+                    ].map(([key, icon, title, help]) => {
+                      const featureKey = key as keyof OrganizationFeatures;
+                      return (
+                        <label
+                          className={
+                            createFeatures[featureKey] ? "selected" : ""
+                          }
+                          key={key}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={createFeatures[featureKey]}
+                            onChange={(event) =>
+                              setCreateFeatures((current) => ({
+                                ...current,
+                                [featureKey]: event.target.checked,
+                              }))
+                            }
+                          />
+                          <span aria-hidden="true">{icon}</span>
+                          <b>{title}</b>
+                          <small>{help}</small>
+                        </label>
+                      );
+                    })}
+                  </div>
+                  {createFeatures.pos && (
+                    <div className="pos-settings panel">
+                      <label>
+                        Currency code
+                        <input
+                          value={createPosConfig.currency}
+                          maxLength={3}
+                          pattern="[A-Z]{3}"
+                          onChange={(event) =>
+                            setCreatePosConfig((current) => ({
+                              ...current,
+                              currency: event.target.value.toUpperCase(),
+                            }))
+                          }
+                        />
+                      </label>
+                      <label>
+                        Default tax rate (%)
+                        <input
+                          type="number"
+                          min="0"
+                          max="100"
+                          step="0.01"
+                          value={createPosConfig.taxRate}
+                          onChange={(event) =>
+                            setCreatePosConfig((current) => ({
+                              ...current,
+                              taxRate: Number(event.target.value),
+                            }))
+                          }
+                        />
+                      </label>
+                    </div>
+                  )}
+                </div>
               </section>
               <section className="create-step">
                 <div className="step-heading">
@@ -2314,11 +2676,21 @@ export default function AdminPage() {
                     <p>Show where this organization is located.</p>
                   </span>
                 </div>
-                <OrganizationMapEditor
-                  value={createMap}
-                  onChange={setCreateMap}
-                  canUploadImage={false}
-                />
+                {createFeatures.mapping ? (
+                  <OrganizationMapEditor
+                    value={createMap}
+                    onChange={setCreateMap}
+                    canUploadImage={false}
+                  />
+                ) : (
+                  <div className="schema-note">
+                    <b>No map setup is needed.</b>
+                    <span>
+                      Enable Visual finder in step 1 if this organization needs
+                      photos, pins, capture, or relocation.
+                    </span>
+                  </div>
+                )}
               </section>
               <button>Create organization</button>
             </form>

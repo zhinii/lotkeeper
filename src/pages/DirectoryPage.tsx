@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import AppHeader from "../components/AppHeader";
 import SiteMapView from "../components/SiteMapView";
+import { featuresFor } from "../lib/features";
+import { availabilityFor, availabilityLabel } from "../lib/inventory";
 import { permissionsFor, roleLabel } from "../lib/permissions";
 import { navigate } from "../lib/route";
 import { publicPhoto, requireSupabase, siteMapUrl } from "../lib/supabase";
@@ -11,7 +13,7 @@ import type {
   RecordItem,
 } from "../types";
 
-type AvailabilityFilter = "all" | "available" | "empty" | "untracked";
+type AvailabilityFilter = "all" | "available" | "unavailable" | "untracked";
 
 function itemLocation(item: RecordItem) {
   return String(
@@ -192,13 +194,16 @@ export default function DirectoryPage({ slug }: { slug: string }) {
       if (category !== "all" && item.category !== category) return false;
       if (locationFilter !== "all" && itemLocation(item) !== locationFilter)
         return false;
+      const itemAvailability = availabilityFor(item);
+      if (availability === "available" && itemAvailability !== "available")
+        return false;
       if (
-        availability === "available" &&
-        !(item.quantity === null || item.quantity > 0)
+        availability === "unavailable" &&
+        !["out_of_stock", "sold", "unavailable"].includes(itemAvailability)
       )
         return false;
-      if (availability === "empty" && item.quantity !== 0) return false;
-      if (availability === "untracked" && item.quantity !== null) return false;
+      if (availability === "untracked" && itemAvailability !== "untracked")
+        return false;
       const haystack = searchableText(item);
       return searchKind === "image"
         ? terms.some((term) => term.length > 2 && haystack.includes(term))
@@ -374,7 +379,14 @@ export default function DirectoryPage({ slug }: { slug: string }) {
     setInventoryOpen(false);
     setRecords((items) =>
       items.map((item) =>
-        item.id === selected.id ? { ...item, quantity: data } : item,
+        item.id === selected.id
+          ? {
+              ...item,
+              quantity: data,
+              availability_status:
+                Number(data) > 0 ? "available" : "out_of_stock",
+            }
+          : item,
       ),
     );
   }
@@ -399,21 +411,44 @@ export default function DirectoryPage({ slug }: { slug: string }) {
         <button onClick={() => navigate("home")}>Return home</button>
       </div>
     );
+  const enabledFeatures = featuresFor(organization);
+  if (!enabledFeatures.mapping)
+    return (
+      <main className="access-page">
+        <button className="access-back" onClick={() => navigate("sites")}>
+          ← Organizations
+        </button>
+        <section className="access-card">
+          <div className="brand">MATERIAL PIN</div>
+          <small>VISUAL FINDER</small>
+          <h1>The map is not enabled for this organization</h1>
+          <p>A site administrator can enable mapping in Site settings.</p>
+          <button onClick={() => navigate("staff")}>Open my tools</button>
+        </section>
+      </main>
+    );
 
   return (
     <div className="directory-page material-directory">
       <AppHeader context={organization.name} backTo="sites">
         <button className="active">Visual finder</button>
-        {permissions.viewInventory && (
+        {enabledFeatures.inventory && permissions.viewInventory && (
           <button onClick={() => navigate(`inventory/${organization.slug}`)}>
             Inventory
+          </button>
+        )}
+        {enabledFeatures.pos && permissions.usePos && (
+          <button onClick={() => navigate(`pos/${organization.slug}`)}>
+            Checkout
           </button>
         )}
         <button onClick={() => navigate("staff")}>
           {membership ? roleLabel(membership.role) : "Sign in"}
         </button>
         {membership?.role === "admin" && (
-          <button onClick={() => navigate("admin")}>Site settings</button>
+          <button onClick={() => navigate(`admin/${organization.slug}`)}>
+            Site settings
+          </button>
         )}
       </AppHeader>
 
@@ -549,7 +584,7 @@ export default function DirectoryPage({ slug }: { slug: string }) {
                 >
                   <option value="all">Any availability</option>
                   <option value="available">Available</option>
-                  <option value="empty">Out of stock</option>
+                  <option value="unavailable">Out of stock / sold</option>
                   <option value="untracked">Not quantity tracked</option>
                 </select>
               </label>
@@ -643,6 +678,11 @@ export default function DirectoryPage({ slug }: { slug: string }) {
                   {selectedCollection?.name || activeResult.category}
                 </small>
                 <h2>{activeResult.name}</h2>
+                <span
+                  className={`availability-badge availability-${availabilityFor(activeResult)}`}
+                >
+                  {availabilityLabel(activeResult)}
+                </span>
                 <p>
                   {activeResult.description ||
                     "No description has been added for this item."}
@@ -735,6 +775,11 @@ export default function DirectoryPage({ slug }: { slug: string }) {
                 {new Date(selected.updated_at).toLocaleDateString()}
               </small>
               <h2 id="record-title">{selected.name}</h2>
+              <span
+                className={`availability-badge availability-${availabilityFor(selected)}`}
+              >
+                {availabilityLabel(selected)}
+              </span>
               <p>{selected.description || "No description has been added."}</p>
               <dl className="record-data standard-item-data">
                 {selected.data.sku != null && (
@@ -795,6 +840,27 @@ export default function DirectoryPage({ slug }: { slug: string }) {
                       Update item
                     </button>
                   )}
+                  {permissions.moveItems && (
+                    <button
+                      onClick={() =>
+                        navigate(`move/${organization.slug}/${selected.id}`)
+                      }
+                    >
+                      Relocate on map
+                    </button>
+                  )}
+                  {enabledFeatures.pos &&
+                    permissions.usePos &&
+                    selected.quantity !== null &&
+                    Number(selected.quantity) > 0 && (
+                      <button
+                        onClick={() =>
+                          navigate(`pos/${organization.slug}/${selected.id}`)
+                        }
+                      >
+                        Add to checkout
+                      </button>
+                    )}
                   {selected.quantity !== null &&
                     permissions.adjustInventory && (
                       <button
@@ -828,7 +894,7 @@ export default function DirectoryPage({ slug }: { slug: string }) {
           </article>
         </div>
       )}
-      {permissions.addItems && !detailOpen && (
+      {enabledFeatures.mapping && permissions.addItems && !detailOpen && (
         <button
           className="floating-add"
           onClick={() => navigate(`submit/${organization.slug}`)}

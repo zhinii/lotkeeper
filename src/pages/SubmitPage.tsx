@@ -17,6 +17,7 @@ import {
 } from "../lib/captureFields";
 import { navigate } from "../lib/route";
 import { permissionsFor } from "../lib/permissions";
+import { featuresFor } from "../lib/features";
 import { publicPhoto, requireSupabase, siteMapUrl } from "../lib/supabase";
 import type {
   LocationSource,
@@ -335,12 +336,14 @@ export default function SubmitPage({
         ? { role: "admin" as const, permissions: {} }
         : memberships;
       const access = permissionsFor(membership as any);
-      const allowed = recordId ? access.updateItems : access.addItems;
+      const allowed =
+        featuresFor(organizationData).mapping &&
+        (recordId ? access.updateItems : access.addItems);
       if (!membership || !allowed) {
         setStatus(
           recordId
-            ? "Your site permissions do not allow item updates."
-            : "Your site permissions do not allow new items.",
+            ? "Item updates are not enabled for your account on this site."
+            : "Item capture is not enabled for your account on this site.",
         );
         return;
       }

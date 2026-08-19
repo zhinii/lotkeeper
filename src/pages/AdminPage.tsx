@@ -118,7 +118,11 @@ function parseCsv(text: string) {
     );
 }
 
-export default function AdminPage() {
+export default function AdminPage({
+  initialSlug,
+}: {
+  initialSlug: string | null;
+}) {
   const [session, setSession] = useState<any>(null);
   const [isPlatformAdmin, setIsPlatformAdmin] = useState(false);
   const [organizations, setOrganizations] = useState<Organization[]>([]);
@@ -188,12 +192,14 @@ export default function AdminPage() {
   useEffect(() => {
     const client = requireSupabase();
     client.auth.getSession().then(({ data }) => setSession(data.session));
-    return client.auth.onAuthStateChange((_event, next) => setSession(next))
-      .data.subscription.unsubscribe;
+    return client.auth.onAuthStateChange((_event, next) => {
+      setSession(next);
+      if (!next) setSelected(null);
+    }).data.subscription.unsubscribe;
   }, []);
   useEffect(() => {
     if (session) loadOrganizations();
-  }, [session]);
+  }, [session, initialSlug]);
   useEffect(() => {
     if (selected) {
       setEditCollections(cloneCollections(selected.collections));
@@ -275,18 +281,47 @@ export default function AdminPage() {
   }
   async function loadOrganizations() {
     const client = requireSupabase();
-    const [{ data, error }, { data: platformRows }] = await Promise.all([
-      client.from("organizations").select("*").order("name"),
-      client.from("platform_admins").select("user_id").limit(1),
-    ]);
-    if (error) return setMessage(error.message);
-    setIsPlatformAdmin(Boolean(platformRows?.length));
-    const rows = (data || []) as Organization[];
+    const [{ data, error }, { data: platformRows }, { data: memberRows }] =
+      await Promise.all([
+        client.from("organizations").select("*").order("name"),
+        client.from("platform_admins").select("user_id").limit(1),
+        client
+          .from("organization_members")
+          .select("organization_id,role")
+          .eq("user_id", session?.user?.id || ""),
+      ]);
+    if (error) {
+      setMessage(error.message);
+      return [] as Organization[];
+    }
+    const platformAdmin = Boolean(platformRows?.length);
+    setIsPlatformAdmin(platformAdmin);
+    const adminOrganizationIds = new Set(
+      (memberRows || [])
+        .filter((membership) => membership.role === "admin")
+        .map((membership) => membership.organization_id),
+    );
+    const rows = ((data || []) as Organization[]).filter(
+      (organization) =>
+        platformAdmin ||
+        organization.created_by === session?.user?.id ||
+        adminOrganizationIds.has(organization.id),
+    );
     setOrganizations(rows);
     setSelected(
       (current) =>
-        rows.find((item) => item.id === current?.id) || rows[0] || null,
+        rows.find((item) => item.id === current?.id) ||
+        (initialSlug
+          ? rows.find((item) => item.slug === initialSlug) || null
+          : null),
     );
+    return rows;
+  }
+
+  function chooseOrganization(organization: Organization | null) {
+    setSelected(organization);
+    setTab("overview");
+    setMessage("");
   }
   async function loadWorkspace(organizationId: string) {
     const client = requireSupabase();
@@ -389,9 +424,10 @@ export default function AdminPage() {
         .eq("id", newId);
       if (setupError) return setMessage(setupError.message);
     }
+    const rows = await loadOrganizations();
+    setSelected(rows.find((organization) => organization.id === newId) || null);
     setMessage("Organization created.");
     setTab("overview");
-    await loadOrganizations();
   }
   async function saveConfiguration() {
     if (!selected) return;
@@ -978,6 +1014,7 @@ export default function AdminPage() {
             <button
               className={tab === item.id ? "active" : ""}
               onClick={() => setTab(item.id)}
+              disabled={!selected && item.id !== "overview"}
               key={item.id}
             >
               <span aria-hidden="true">{item.icon}</span>
@@ -995,30 +1032,35 @@ export default function AdminPage() {
           Sign out
         </button>
       </header>
-      <div className="admin-orgbar">
-        <label>
-          <small>MANAGING</small>
-          <select
-            aria-label="Organization"
-            value={selected?.id || ""}
-            disabled={!organizations.length}
-            onChange={(event) =>
-              setSelected(
-                organizations.find((item) => item.id === event.target.value) ||
-                  null,
-              )
-            }
-          >
-            {!organizations.length && (
-              <option value="">No organizations yet</option>
-            )}
-            {organizations.map((item) => (
-              <option key={item.id} value={item.id}>
-                {item.name}
-              </option>
-            ))}
-          </select>
-        </label>
+      <div className={`admin-orgbar${selected ? " selected" : ""}`}>
+        {selected ? (
+          <label>
+            <small>MANAGING</small>
+            <select
+              aria-label="Organization"
+              value={selected.id}
+              onChange={(event) =>
+                chooseOrganization(
+                  organizations.find(
+                    (item) => item.id === event.target.value,
+                  ) || null,
+                )
+              }
+            >
+              <option value="">Choose another organization</option>
+              {organizations.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : (
+          <div className="admin-org-prompt">
+            <small>ORGANIZATION REQUIRED</small>
+            <b>Choose an organization before opening management tools.</b>
+          </div>
+        )}
         {isPlatformAdmin && (
           <button className="admin-new-org" onClick={() => setTab("create")}>
             + New organization
@@ -1035,7 +1077,35 @@ export default function AdminPage() {
       </div>
       <main className="admin-main">
         <p className="notice">{message}</p>
-        {tab === "overview" && !selected && (
+        {tab === "overview" && !selected && organizations.length > 0 && (
+          <section className="admin-organization-picker panel">
+            <small>YOUR ORGANIZATIONS</small>
+            <h1>Choose an organization</h1>
+            <p>
+              Nothing is opened automatically. Select the organization you want
+              to review or manage.
+            </p>
+            <div className="admin-organization-grid">
+              {organizations.map((organization) => (
+                <button
+                  key={organization.id}
+                  onClick={() => chooseOrganization(organization)}
+                >
+                  <span className="organization-pin" aria-hidden="true" />
+                  <span>
+                    <b>{organization.name}</b>
+                    <small>
+                      {organization.collections.length} item groups ·{" "}
+                      {organization.public_access ? "Public" : "Private"}
+                    </small>
+                  </span>
+                  <i aria-hidden="true">→</i>
+                </button>
+              ))}
+            </div>
+          </section>
+        )}
+        {tab === "overview" && !selected && !organizations.length && (
           <section className="admin-empty-state panel">
             <small>GET STARTED</small>
             <h1>Create your first organization</h1>
@@ -1087,8 +1157,8 @@ export default function AdminPage() {
               <button onClick={() => navigate(`inventory/${selected.slug}`)}>
                 <span className="task-icon items">#</span>
                 <span>
-                  <b>Open inventory tracker</b>
-                  <small>Stock levels, adjustments, and history</small>
+                  <b>Open inventory &amp; checkout</b>
+                  <small>Stock levels, sales, adjustments, and history</small>
                 </span>
                 <i>→</i>
               </button>

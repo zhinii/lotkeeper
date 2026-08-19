@@ -51,30 +51,33 @@ export default function InventoryPage({ slug }: { slug: string }) {
     const client = requireSupabase();
     const [recordRows, privateRows, transactionRows, salesCapability] =
       await Promise.all([
-      client
-        .from("records")
-        .select("*")
-        .eq("organization_id", org.id)
-        .eq("status", "active")
-        .order("name"),
-      access.viewPrivate
-        ? client
-            .from("record_private_data")
-            .select("record_id,data")
-            .eq("organization_id", org.id)
-        : Promise.resolve({ data: [], error: null }),
-      access.viewInventory
-        ? client
-            .from("inventory_transactions")
-            .select("*")
-            .eq("organization_id", org.id)
-            .order("created_at", { ascending: false })
-            .limit(40)
-        : Promise.resolve({ data: [], error: null }),
-      access.viewInventory
-        ? client.from("inventory_transactions").select("counterparty").limit(1)
-        : Promise.resolve({ data: [], error: null }),
-    ]);
+        client
+          .from("records")
+          .select("*")
+          .eq("organization_id", org.id)
+          .eq("status", "active")
+          .order("name"),
+        access.viewPrivate
+          ? client
+              .from("record_private_data")
+              .select("record_id,data")
+              .eq("organization_id", org.id)
+          : Promise.resolve({ data: [], error: null }),
+        access.viewInventory
+          ? client
+              .from("inventory_transactions")
+              .select("*")
+              .eq("organization_id", org.id)
+              .order("created_at", { ascending: false })
+              .limit(40)
+          : Promise.resolve({ data: [], error: null }),
+        access.viewInventory
+          ? client
+              .from("inventory_transactions")
+              .select("counterparty")
+              .limit(1)
+          : Promise.resolve({ data: [], error: null }),
+      ]);
     if (recordRows.error) setMessage(recordRows.error.message);
     if (privateRows.error) setMessage(privateRows.error.message);
     if (transactionRows.error) setMessage(transactionRows.error.message);
@@ -196,10 +199,7 @@ export default function InventoryPage({ slug }: { slug: string }) {
       request.counterparty_text = String(form.get("counterparty") || "");
       request.reference_text = String(form.get("reference") || "");
     }
-    const { error } = await requireSupabase().rpc(
-      "adjust_inventory",
-      request,
-    );
+    const { error } = await requireSupabase().rpc("adjust_inventory", request);
     if (error) return setMessage(error.message);
     const wasSale = adjustEventKind === "sold";
     setAdjusting(null);
@@ -248,22 +248,29 @@ export default function InventoryPage({ slug }: { slug: string }) {
   return (
     <div className="inventory-page product-page">
       <AppHeader
-        context={`${organization.name} · Inventory`}
+        context={`${organization.name} · Inventory${permissions.adjustInventory ? " & checkout" : ""}`}
         backTo={`org/${slug}`}
       >
         <button onClick={() => navigate(`org/${slug}`)}>Visual finder</button>
         {membership.role === "admin" && (
-          <button onClick={() => navigate("admin")}>Site settings</button>
+          <button onClick={() => navigate(`admin/${slug}`)}>
+            Admin console
+          </button>
         )}
       </AppHeader>
       <main className="inventory-shell">
         <section className="inventory-hero">
           <div>
             <small>INVENTORY TRACKER</small>
-            <h1>Know what is on hand</h1>
+            <h1>
+              {permissions.adjustInventory
+                ? "Inventory and checkout"
+                : "Know what is on hand"}
+            </h1>
             <p>
-              Search stock, check locations, and record changes without crowding
-              the visual map.
+              {permissions.adjustInventory
+                ? "Search stock, check locations, record sales, and update quantities from one workspace."
+                : "Search stock and check locations without crowding the visual map."}
             </p>
           </div>
           <span className="role-badge">{roleLabel(membership.role)}</span>
@@ -382,7 +389,7 @@ export default function InventoryPage({ slug }: { slug: string }) {
                             disabled={Number(item.quantity) <= 0}
                             onClick={() => openAdjustment(item, "sold")}
                           >
-                            Record sale
+                            Checkout / sale
                           </button>
                         )}
                         <button onClick={() => openAdjustment(item, "used")}>
@@ -429,9 +436,7 @@ export default function InventoryPage({ slug }: { slug: string }) {
                     {item.event_type === "sold" && item.counterparty && (
                       <small>
                         To {item.counterparty}
-                        {item.reference_code
-                          ? ` · ${item.reference_code}`
-                          : ""}
+                        {item.reference_code ? ` · ${item.reference_code}` : ""}
                       </small>
                     )}
                   </span>

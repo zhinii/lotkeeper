@@ -104,9 +104,164 @@
   background: white;
 }
 .staff-organizations {
-  width: min(100% - 32px, 760px);
+  width: min(100% - 32px, 1040px);
   margin: auto;
   padding: 60px 0;
+}
+
+.staff-choice-intro {
+  max-width: 620px;
+  margin: 0 0 28px;
+  color: var(--product-muted);
+  line-height: 1.5;
+}
+
+.staff-site-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
+  gap: 14px;
+}
+
+.staff-site-choice {
+  display: grid;
+  min-width: 0;
+  min-height: 112px;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+  padding: 20px;
+  color: var(--product-ink);
+  text-align: left;
+  background: #fff;
+  border: 1px solid var(--product-line);
+  border-radius: 18px;
+  box-shadow: 0 4px 16px #173d2e12;
+}
+
+.staff-site-choice:hover,
+.staff-site-choice:focus-visible {
+  border-color: var(--product-green);
+  box-shadow: 0 10px 26px #173d2e20;
+}
+
+.staff-site-choice > span:nth-child(2) {
+  min-width: 0;
+}
+
+.staff-site-choice strong,
+.staff-site-choice small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.staff-site-choice strong {
+  font-size: 18px;
+}
+
+.staff-site-choice small {
+  margin-top: 6px;
+  color: var(--product-muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.staff-site-choice > b {
+  color: var(--product-green);
+  font-size: 22px;
+}
+
+.staff-change-site {
+  min-height: 42px;
+  margin-bottom: 24px;
+  padding: 9px 13px;
+  color: var(--product-green-dark);
+  background: #fff;
+  border: 1px solid var(--product-line);
+  border-radius: 999px;
+  font-weight: 800;
+}
+
+.staff-workspace-heading {
+  display: flex;
+  gap: 18px;
+  align-items: center;
+  margin-bottom: 24px;
+  padding-bottom: 22px;
+  border-bottom: 1px solid var(--product-line);
+}
+
+.staff-workspace-heading small,
+.staff-workspace-heading h1,
+.staff-workspace-heading p {
+  margin: 0;
+}
+
+.staff-workspace-heading small {
+  color: var(--product-green);
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.staff-workspace-heading h1 {
+  margin-top: 4px;
+  font-size: clamp(30px, 5vw, 44px);
+}
+
+.staff-workspace-heading p {
+  margin-top: 5px;
+  color: var(--product-muted);
+}
+
+.staff-workspace-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.staff-workspace-actions > button {
+  display: grid;
+  min-width: 0;
+  min-height: 138px;
+  grid-template-columns: 46px minmax(0, 1fr);
+  gap: 5px 14px;
+  align-content: center;
+  padding: 20px;
+  color: var(--product-ink);
+  text-align: left;
+  background: #fff;
+  border: 1px solid var(--product-line);
+  border-radius: 18px;
+}
+
+.staff-workspace-actions > button:hover,
+.staff-workspace-actions > button:focus-visible {
+  border-color: var(--product-green);
+  box-shadow: 0 10px 24px #173d2e1b;
+}
+
+.staff-workspace-actions > button > span {
+  display: grid;
+  width: 46px;
+  height: 46px;
+  grid-row: 1 / 3;
+  place-items: center;
+  color: var(--product-green-dark);
+  background: var(--product-mint);
+  border-radius: 14px;
+  font-size: 22px;
+}
+
+.staff-workspace-actions b {
+  align-self: end;
+  font-size: 18px;
+}
+
+.staff-workspace-actions small {
+  color: var(--product-muted);
+  line-height: 1.4;
 }
 .material-directory {
   width: 100%;
@@ -157,7 +312,10 @@
 .finder-toolbar {
   display: grid;
   grid-column: 1 / -1;
-  grid-template-columns: minmax(210px, 0.8fr) minmax(320px, 1.35fr) minmax(260px, 1fr) auto;
+  grid-template-columns: minmax(210px, 0.8fr) minmax(320px, 1.35fr) minmax(
+      260px,
+      1fr
+    ) auto;
   gap: 18px;
   align-items: end;
   padding: 14px 20px;
@@ -4300,13 +4458,117 @@ body:has(.login-page) {
   font-weight: 900;
 }
 
+.admin-header nav button:disabled {
+  cursor: default;
+  opacity: 0.35;
+}
+
 .admin-orgbar {
+  position: sticky;
+  top: 68px;
+  z-index: 28;
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 8px;
   padding: 12px 14px;
   background: #eaf1ed;
   border-bottom: 1px solid var(--public-line);
+}
+
+.admin-org-prompt {
+  display: grid;
+  gap: 4px;
+  align-content: center;
+  grid-column: 1 / -1;
+  min-width: 0;
+}
+
+.admin-org-prompt small {
+  color: var(--public-green);
+  font-size: 8px;
+  font-weight: 900;
+  letter-spacing: 0.1em;
+}
+
+.admin-org-prompt b {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 12px;
+}
+
+.admin-organization-picker > small {
+  color: var(--public-green);
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: 0.1em;
+}
+
+.admin-organization-picker h1 {
+  margin: 7px 0;
+  font-size: clamp(30px, 6vw, 44px);
+  letter-spacing: -0.04em;
+}
+
+.admin-organization-picker > p {
+  max-width: 620px;
+  margin: 0;
+  color: var(--public-muted);
+  line-height: 1.5;
+}
+
+.admin-organization-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
+  gap: 12px;
+  margin-top: 24px;
+}
+
+.admin-organization-grid > button {
+  display: grid;
+  min-width: 0;
+  min-height: 104px;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 13px;
+  align-items: center;
+  padding: 17px;
+  color: var(--public-ink);
+  text-align: left;
+  background: #fff;
+  border: 1px solid var(--public-line);
+  border-radius: 16px;
+}
+
+.admin-organization-grid > button:hover,
+.admin-organization-grid > button:focus-visible {
+  border-color: var(--public-green);
+  box-shadow: 0 8px 20px #173d2e1c;
+}
+
+.admin-organization-grid > button > span:nth-child(2) {
+  min-width: 0;
+}
+
+.admin-organization-grid b,
+.admin-organization-grid small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.admin-organization-grid b {
+  font-size: 16px;
+}
+
+.admin-organization-grid small {
+  margin-top: 5px;
+  color: var(--public-muted);
+  font-size: 10px;
+}
+
+.admin-organization-grid i {
+  color: var(--public-green);
+  font-style: normal;
+  font-size: 20px;
 }
 
 .admin-orgbar > label {
@@ -5362,6 +5624,10 @@ body:has(.login-page) {
     grid-column: auto;
   }
 
+  .admin-org-prompt {
+    grid-column: auto;
+  }
+
   .admin-main {
     padding: 34px 24px 100px;
   }
@@ -5456,6 +5722,20 @@ body:has(.login-page) {
   }
 }
 
+@media (max-width: 620px) {
+  .staff-organizations {
+    padding: 34px 0 80px;
+  }
+
+  .staff-workspace-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .staff-workspace-actions > button {
+    min-height: 118px;
+  }
+}
+
 @media (min-width: 900px) {
   .admin-header {
     grid-template-columns: 210px minmax(0, 1fr) auto;
@@ -5477,7 +5757,7 @@ body:has(.login-page) {
 
   .admin-header nav button {
     display: flex;
-    min-width: 105px;
+    min-width: 96px;
     min-height: 42px;
     gap: 7px;
     padding: 9px 13px;
@@ -5497,6 +5777,12 @@ body:has(.login-page) {
 
   .moderation-list > article {
     padding: 20px;
+  }
+}
+
+@media (max-width: 899px) {
+  .admin-header nav {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
   }
 }
 /* Capture forms keep required material and inventory information consistent. */

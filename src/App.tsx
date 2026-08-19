@@ -107,7 +107,7 @@ function HomePage() {
               quantities, status, and a clear change history.
             </p>
             <ul>
-              <li>Receive, use, and count inventory</li>
+              <li>Receive, use, sell, and count inventory</li>
               <li>Category-first browsing and fast search</li>
               <li>Accountable updates and administrator alerts</li>
             </ul>
@@ -171,7 +171,7 @@ export default function App() {
   }, []);
   if (!configured) return <SetupPage />;
   const parts = route.split("/");
-  if (parts[0] === "admin") return <AdminPage />;
+  if (parts[0] === "admin") return <AdminPage initialSlug={parts[1] || null} />;
   if (parts[0] === "staff") return <StaffPage />;
   if (parts[0] === "sites") return <SitesPage />;
   if (parts[0] === "org" && parts[1]) return <DirectoryPage slug={parts[1]} />;

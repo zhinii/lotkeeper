@@ -31,8 +31,8 @@ export const employeePermissionOptions: Array<{
   },
   {
     key: "adjustInventory",
-    label: "Change inventory quantities",
-    help: "Record received, used, and counted stock with an audit trail.",
+    label: "Update inventory and record sales",
+    help: "Receive, use, count, or sell stock with customer and reference details in the audit trail.",
   },
 ];
 

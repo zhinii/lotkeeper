@@ -170,7 +170,10 @@ test("public browsing combines image, text and filter search with the map", asyn
   assert.match(directory, /records=\{visibleRecords\}/);
   assert.match(directory, /pinNumbers=\{pinNumbers\}/);
   assert.match(styles, /\.directory-page \.map-pin[\s\S]*opacity:\s*0\.42/);
-  assert.match(styles, /\.directory-page \.map-pin\.selected[\s\S]*opacity:\s*1/);
+  assert.match(
+    styles,
+    /\.directory-page \.map-pin\.selected[\s\S]*opacity:\s*1/,
+  );
   assert.match(styles, /\.map-pin-preview/);
   assert.match(directory, /Every result number matches its pin on the map/);
   assert.match(directory, /active-result-card/);
@@ -199,6 +202,27 @@ test("manager console uses plain-language tasks and hides advanced setup", async
   assert.match(collections, /Open to edit/);
   assert.doesNotMatch(collections, /Let visitors suggest new entries/);
   assert.match(map, /Exact map values/);
+});
+
+test("signed-in users explicitly choose an organization before tools open", async () => {
+  const app = await read("src/App.tsx");
+  const staff = await read("src/pages/StaffPage.tsx");
+  const admin = await read("src/pages/AdminPage.tsx");
+  const styles = await read("src/styles.css");
+  assert.match(staff, /selectedOrganizationId/);
+  assert.match(staff, /Choose where you are working/);
+  assert.match(staff, /staff-site-grid/);
+  assert.match(staff, /Choose another organization/);
+  assert.match(staff, /Inventory & checkout/);
+  assert.doesNotMatch(staff, /workspace-site-card/);
+  assert.match(app, /<AdminPage initialSlug=/);
+  assert.match(admin, /Nothing is opened automatically/);
+  assert.match(admin, /initialSlug/);
+  assert.doesNotMatch(admin, /\|\| rows\[0\] \|\| null/);
+  assert.match(admin, /disabled=\{!selected && item\.id !== "overview"\}/);
+  assert.match(styles, /\.admin-header[\s\S]*position:\s*sticky/);
+  assert.match(styles, /\.admin-orgbar[\s\S]*position:\s*sticky/);
+  assert.match(styles, /repeat\(5, minmax\(0, 1fr\)\)/);
 });
 
 test("site administrators manage roles, permissions, and users", async () => {
@@ -249,6 +273,7 @@ test("database roles enforce platform, site, employee, and viewer access", async
 
 test("inventory tracker is separate, searchable, and audited", async () => {
   const inventory = await read("src/pages/InventoryPage.tsx");
+  const permissions = await read("src/lib/permissions.ts");
   const schema = await read("supabase/schema.sql");
   assert.match(inventory, /Know what is on hand/);
   assert.match(inventory, /Item groups/);
@@ -257,13 +282,19 @@ test("inventory tracker is separate, searchable, and audited", async () => {
   assert.match(inventory, /Recent inventory activity/);
   assert.match(inventory, /Stock was received or returned/);
   assert.match(inventory, /Record sale/);
+  assert.match(inventory, /Checkout \/ sale/);
+  assert.match(inventory, /Inventory and checkout/);
   assert.match(inventory, /Sold to \/ customer or job/);
   assert.match(inventory, /counterparty_text/);
   assert.match(inventory, /salesReady/);
   assert.match(inventory, /select\("counterparty"\)/);
+  assert.match(permissions, /Update inventory and record sales/);
   assert.match(schema, /create or replace function public\.adjust_inventory/);
   assert.match(schema, /actor_name/);
-  assert.match(schema, /event_type in \('used','removed','added','counted','moved','sold'\)/);
+  assert.match(
+    schema,
+    /event_type in \('used','removed','added','counted','moved','sold'\)/,
+  );
   assert.match(schema, /Not enough inventory is available for this sale/);
   assert.match(schema, /counterparty/);
   assert.match(schema, /reference_code/);
